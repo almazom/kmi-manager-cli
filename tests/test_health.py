@@ -20,6 +20,12 @@ def test_score_key_warn_on_low_quota() -> None:
     assert score_key(usage, state, exhausted=False) == "warn"
 
 
+def test_score_key_warn_on_forbidden() -> None:
+    state = KeyState(error_403=1, request_count=1)
+    usage = Usage(remaining_percent=50.0, used=None, limit=None, remaining=None, reset_hint=None, limits=[], raw={})
+    assert score_key(usage, state, exhausted=False) == "warn"
+
+
 def test_score_key_warn_on_usage_missing() -> None:
     state = KeyState()
     assert score_key(None, state, exhausted=False) == "warn"
