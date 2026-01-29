@@ -13,7 +13,7 @@ from kmi_manager_cli.config import (
 from pathlib import Path
 
 from kmi_manager_cli.auth_accounts import Account, load_accounts_from_auths_dir, load_current_account
-from kmi_manager_cli.errors import no_keys_message
+from kmi_manager_cli.errors import no_keys_message, remediation_message
 from kmi_manager_cli.health import get_accounts_health, get_health_map
 from kmi_manager_cli.keys import Registry, load_auths_dir
 from kmi_manager_cli.proxy import run_proxy
@@ -54,7 +54,11 @@ def _manual_rotate(config) -> None:
     registry = _load_registry_or_exit(config)
     state = load_state(config, registry)
     health = get_health_map(config, registry, state)
-    active, rotated, reason = rotate_manual(registry, state, health=health)
+    try:
+        active, rotated, reason = rotate_manual(registry, state, health=health)
+    except RuntimeError:
+        typer.echo(remediation_message())
+        raise typer.Exit(code=1)
     save_state(config, state)
     render_rotation_dashboard(active.label, registry, state, health=health, rotated=rotated, reason=reason)
 
