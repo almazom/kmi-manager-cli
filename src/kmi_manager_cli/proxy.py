@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import secrets
 import time
 import uuid
-from dataclasses import dataclass
-from typing import Iterable, Optional, Tuple
+from collections import deque
+from dataclasses import dataclass, field
+from typing import Deque, Iterable, Optional, Tuple
 
 import httpx
 from fastapi import FastAPI, Request, Response
@@ -25,6 +27,36 @@ class ProxyContext:
     config: Config
     registry: Registry
     state: State
+    rate_limiter: "RateLimiter"
+
+
+@dataclass
+class RateLimiter:
+    max_rps: int
+    max_rpm: int
+    recent: Deque[float] = field(default_factory=deque)
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    async def allow(self) -> bool:
+        if self.max_rps <= 0 and self.max_rpm <= 0:
+            return True
+        async with self.lock:
+            now = time.time()
+            while self.recent and now - self.recent[0] > 60:
+                self.recent.popleft()
+            if self.max_rpm > 0 and len(self.recent) >= self.max_rpm:
+                return False
+            if self.max_rps > 0:
+                cutoff = now - 1
+                rps = 0
+                for ts in reversed(self.recent):
+                    if ts < cutoff:
+                        break
+                    rps += 1
+                if rps >= self.max_rps:
+                    return False
+            self.recent.append(now)
+            return True
 
 
 def parse_listen(listen: str) -> Tuple[str, int]:
@@ -69,7 +101,8 @@ def _authorize_request(request: Request, token: str) -> bool:
 
 def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
     app = FastAPI()
-    ctx = ProxyContext(config=config, registry=registry, state=state)
+    limiter = RateLimiter(config.proxy_max_rps, config.proxy_max_rpm)
+    ctx = ProxyContext(config=config, registry=registry, state=state, rate_limiter=limiter)
     logger = get_logger(config)
 
     @app.api_route(f"{config.proxy_base_path}/{{path:path}}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
@@ -78,6 +111,9 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
         if not _authorize_request(request, ctx.config.proxy_token):
             log_event(logger, "proxy_unauthorized", endpoint=f"/{path}")
             return JSONResponse({"error": "Unauthorized proxy access"}, status_code=401)
+        if not await ctx.rate_limiter.allow():
+            log_event(logger, "proxy_rate_limited", endpoint=f"/{path}")
+            return JSONResponse({"error": "Proxy rate limit exceeded"}, status_code=429)
         selected = _select_key(ctx)
         if not selected:
             log_event(logger, "no_keys_available", endpoint=f"/{path}")
@@ -132,12 +168,30 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.request(
-                    request.method,
-                    upstream_url,
-                    headers=headers,
-                    content=body,
-                )
+                attempt = 0
+                while True:
+                    try:
+                        resp = await client.request(
+                            request.method,
+                            upstream_url,
+                            headers=headers,
+                            content=body,
+                        )
+                    except httpx.HTTPError as exc:
+                        if attempt < ctx.config.proxy_retry_max:
+                            delay = (ctx.config.proxy_retry_base_ms * (2 ** attempt)) / 1000.0
+                            await asyncio.sleep(delay)
+                            attempt += 1
+                            continue
+                        raise exc
+
+                    if resp.status_code in {429} or 500 <= resp.status_code <= 599:
+                        if attempt < ctx.config.proxy_retry_max:
+                            delay = (ctx.config.proxy_retry_base_ms * (2 ** attempt)) / 1000.0
+                            await asyncio.sleep(delay)
+                            attempt += 1
+                            continue
+                    break
         except httpx.HTTPError as exc:
             record_request(ctx.state, key_label, 503)
             save_state(ctx.config, ctx.state)

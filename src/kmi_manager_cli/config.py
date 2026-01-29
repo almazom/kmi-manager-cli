@@ -17,6 +17,10 @@ DEFAULT_KMI_AUTO_ROTATE_ALLOWED = True
 DEFAULT_KMI_ROTATION_COOLDOWN_SECONDS = 300
 DEFAULT_KMI_PROXY_ALLOW_REMOTE = False
 DEFAULT_KMI_PROXY_TOKEN = ""
+DEFAULT_KMI_PROXY_MAX_RPS = 0
+DEFAULT_KMI_PROXY_MAX_RPM = 0
+DEFAULT_KMI_PROXY_RETRY_MAX = 0
+DEFAULT_KMI_PROXY_RETRY_BASE_MS = 250
 
 
 def _parse_bool(value: Optional[str], default: bool) -> bool:
@@ -51,6 +55,10 @@ class Config:
     rotation_cooldown_seconds: int
     proxy_allow_remote: bool
     proxy_token: str
+    proxy_max_rps: int
+    proxy_max_rpm: int
+    proxy_retry_max: int
+    proxy_retry_base_ms: int
     env_path: Optional[Path] = None
 
 
@@ -88,6 +96,10 @@ def load_config(env_path: Optional[Path] = None) -> Config:
     cooldown = int(os.getenv("KMI_ROTATION_COOLDOWN_SECONDS", str(DEFAULT_KMI_ROTATION_COOLDOWN_SECONDS)))
     proxy_allow_remote = _parse_bool(os.getenv("KMI_PROXY_ALLOW_REMOTE"), DEFAULT_KMI_PROXY_ALLOW_REMOTE)
     proxy_token = os.getenv("KMI_PROXY_TOKEN", DEFAULT_KMI_PROXY_TOKEN)
+    proxy_max_rps = int(os.getenv("KMI_PROXY_MAX_RPS", str(DEFAULT_KMI_PROXY_MAX_RPS)))
+    proxy_max_rpm = int(os.getenv("KMI_PROXY_MAX_RPM", str(DEFAULT_KMI_PROXY_MAX_RPM)))
+    proxy_retry_max = int(os.getenv("KMI_PROXY_RETRY_MAX", str(DEFAULT_KMI_PROXY_RETRY_MAX)))
+    proxy_retry_base_ms = int(os.getenv("KMI_PROXY_RETRY_BASE_MS", str(DEFAULT_KMI_PROXY_RETRY_BASE_MS)))
 
     return Config(
         auths_dir=auths_dir,
@@ -100,5 +112,9 @@ def load_config(env_path: Optional[Path] = None) -> Config:
         rotation_cooldown_seconds=cooldown,
         proxy_allow_remote=proxy_allow_remote,
         proxy_token=proxy_token,
+        proxy_max_rps=proxy_max_rps,
+        proxy_max_rpm=proxy_max_rpm,
+        proxy_retry_max=proxy_retry_max,
+        proxy_retry_base_ms=proxy_retry_base_ms,
         env_path=env_path,
     )
