@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+from collections import deque
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Iterable
@@ -29,11 +31,33 @@ def append_trace(config: Config, entry: dict) -> None:
             handle.write(json.dumps(entry, ensure_ascii=True) + "\n")
 
 
+def _tail_lines(path: Path, limit: int) -> list[str]:
+    if limit <= 0:
+        return []
+    buffer = deque()
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        position = handle.tell()
+        chunk = b""
+        while position > 0 and len(buffer) <= limit:
+            read_size = min(4096, position)
+            position -= read_size
+            handle.seek(position, os.SEEK_SET)
+            data = handle.read(read_size)
+            chunk = data + chunk
+            lines = chunk.splitlines()
+            if len(lines) > limit:
+                buffer = deque(lines[-limit:])
+                break
+            buffer = deque(lines)
+        return [line.decode("utf-8", errors="ignore") for line in buffer]
+
+
 def load_trace_entries(path: Path, window: int = 200) -> list[dict]:
     if not path.exists():
         return []
-    lines = path.read_text().splitlines()
-    tail = lines[-window:]
+    with file_lock(path):
+        tail = _tail_lines(path, window)
     entries: list[dict] = []
     for line in tail:
         try:
@@ -59,3 +83,13 @@ def compute_confidence(entries: Iterable[dict]) -> float:
     max_dev = max(abs(count - expected) / expected for count in counts.values())
     confidence = max(0.0, 100.0 - (max_dev * 100))
     return round(confidence, 2)
+
+
+def compute_distribution(entries: Iterable[dict]) -> tuple[dict[str, int], int]:
+    counts: dict[str, int] = {}
+    total = 0
+    for entry in entries:
+        label = entry.get("key_label", "unknown")
+        counts[label] = counts.get(label, 0) + 1
+        total += 1
+    return counts, total
