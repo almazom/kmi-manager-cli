@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 import time
 import uuid
 from dataclasses import dataclass
@@ -50,6 +51,22 @@ def _select_key(ctx: ProxyContext) -> Optional[tuple[str, str]]:
     return key.label, key.api_key
 
 
+def _is_local_host(host: str) -> bool:
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def _authorize_request(request: Request, token: str) -> bool:
+    if not token:
+        return True
+    auth_header = request.headers.get("authorization", "")
+    provided = ""
+    if auth_header.lower().startswith("bearer "):
+        provided = auth_header.split(" ", 1)[1].strip()
+    if not provided:
+        provided = request.headers.get("x-kmi-proxy-token", "").strip()
+    return secrets.compare_digest(provided, token)
+
+
 def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
     app = FastAPI()
     ctx = ProxyContext(config=config, registry=registry, state=state)
@@ -58,6 +75,9 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
     @app.api_route(f"{config.proxy_base_path}/{{path:path}}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
     async def proxy(path: str, request: Request) -> Response:
         start = time.perf_counter()
+        if not _authorize_request(request, ctx.config.proxy_token):
+            log_event(logger, "proxy_unauthorized", endpoint=f"/{path}")
+            return JSONResponse({"error": "Unauthorized proxy access"}, status_code=401)
         selected = _select_key(ctx)
         if not selected:
             log_event(logger, "no_keys_available", endpoint=f"/{path}")
@@ -185,5 +205,9 @@ def run_proxy(config: Config, registry: Registry, state: State) -> None:
     import uvicorn
 
     host, port = parse_listen(config.proxy_listen)
+    if not _is_local_host(host) and not config.proxy_allow_remote:
+        raise ValueError("Remote proxy binding is disabled. Set KMI_PROXY_ALLOW_REMOTE=1 to override.")
+    if not _is_local_host(host) and not config.proxy_token:
+        raise ValueError("Remote proxy binding requires KMI_PROXY_TOKEN for authentication.")
     app = create_app(config, registry, state)
     uvicorn.run(app, host=host, port=port)

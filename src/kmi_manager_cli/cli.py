@@ -170,7 +170,11 @@ def proxy() -> None:
     registry = _load_registry_or_exit(config)
     state = load_state(config, registry)
     typer.echo(f"Starting proxy at http://{config.proxy_listen}{config.proxy_base_path}")
-    run_proxy(config, registry, state)
+    try:
+        run_proxy(config, registry, state)
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1)
 
 
 @app.command()

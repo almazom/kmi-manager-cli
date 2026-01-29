@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+from dotenv import load_dotenv
+
+DEFAULT_KMI_AUTHS_DIR = "_auths"
+DEFAULT_KMI_PROXY_LISTEN = "127.0.0.1:54123"
+DEFAULT_KMI_PROXY_BASE_PATH = "/kmi-rotor/v1"
+DEFAULT_KMI_UPSTREAM_BASE_URL = "https://api.kimi.com/coding/v1"
+DEFAULT_KMI_STATE_DIR = "~/.kmi"
+DEFAULT_KMI_DRY_RUN = True
+DEFAULT_KMI_AUTO_ROTATE_ALLOWED = True
+DEFAULT_KMI_ROTATION_COOLDOWN_SECONDS = 300
+DEFAULT_KMI_PROXY_ALLOW_REMOTE = False
+DEFAULT_KMI_PROXY_TOKEN = ""
+
+
+def _parse_bool(value: Optional[str], default: bool) -> bool:
+    if value is None:
+        return default
+    value = value.strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _require_non_empty(name: str, value: str) -> str:
+    if not value or not value.strip():
+        raise ValueError(f"{name} must not be empty")
+    return value
+
+
+def _normalize_base_path(value: str) -> str:
+    value = _require_non_empty("KMI_PROXY_BASE_PATH", value)
+    if not value.startswith("/"):
+        raise ValueError("KMI_PROXY_BASE_PATH must start with '/'")
+    return value.rstrip("/") or "/"
+
+
+@dataclass(frozen=True)
+class Config:
+    auths_dir: Path
+    proxy_listen: str
+    proxy_base_path: str
+    upstream_base_url: str
+    state_dir: Path
+    dry_run: bool
+    auto_rotate_allowed: bool
+    rotation_cooldown_seconds: int
+    proxy_allow_remote: bool
+    proxy_token: str
+    env_path: Optional[Path] = None
+
+
+
+def _resolve_auths_dir() -> Path:
+    env_val = os.getenv("KMI_AUTHS_DIR")
+    if env_val:
+        return Path(env_val).expanduser()
+    candidate = Path(DEFAULT_KMI_AUTHS_DIR).expanduser()
+    if candidate.exists():
+        return candidate
+    home_candidate = Path("~/.kimi/_auths").expanduser()
+    if home_candidate.exists():
+        return home_candidate
+    return candidate
+
+
+def load_config(env_path: Optional[Path] = None) -> Config:
+    if env_path is None:
+        env_path = Path(".env") if Path(".env").exists() else None
+    if env_path is not None:
+        load_dotenv(env_path)
+    else:
+        load_dotenv()
+
+    auths_dir = _resolve_auths_dir()
+    proxy_listen = _require_non_empty("KMI_PROXY_LISTEN", os.getenv("KMI_PROXY_LISTEN", DEFAULT_KMI_PROXY_LISTEN))
+    proxy_base_path = _normalize_base_path(os.getenv("KMI_PROXY_BASE_PATH", DEFAULT_KMI_PROXY_BASE_PATH))
+    upstream_base_url = _require_non_empty(
+        "KMI_UPSTREAM_BASE_URL", os.getenv("KMI_UPSTREAM_BASE_URL", DEFAULT_KMI_UPSTREAM_BASE_URL)
+    ).rstrip("/")
+    state_dir = Path(os.getenv("KMI_STATE_DIR", DEFAULT_KMI_STATE_DIR)).expanduser()
+    dry_run = _parse_bool(os.getenv("KMI_DRY_RUN"), DEFAULT_KMI_DRY_RUN)
+    auto_rotate_allowed = _parse_bool(os.getenv("KMI_AUTO_ROTATE_ALLOWED"), DEFAULT_KMI_AUTO_ROTATE_ALLOWED)
+    cooldown = int(os.getenv("KMI_ROTATION_COOLDOWN_SECONDS", str(DEFAULT_KMI_ROTATION_COOLDOWN_SECONDS)))
+    proxy_allow_remote = _parse_bool(os.getenv("KMI_PROXY_ALLOW_REMOTE"), DEFAULT_KMI_PROXY_ALLOW_REMOTE)
+    proxy_token = os.getenv("KMI_PROXY_TOKEN", DEFAULT_KMI_PROXY_TOKEN)
+
+    return Config(
+        auths_dir=auths_dir,
+        proxy_listen=proxy_listen,
+        proxy_base_path=proxy_base_path,
+        upstream_base_url=upstream_base_url,
+        state_dir=state_dir,
+        dry_run=dry_run,
+        auto_rotate_allowed=auto_rotate_allowed,
+        rotation_cooldown_seconds=cooldown,
+        proxy_allow_remote=proxy_allow_remote,
+        proxy_token=proxy_token,
+        env_path=env_path,
+    )
