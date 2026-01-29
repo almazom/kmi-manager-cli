@@ -35,6 +35,7 @@ kmi proxy
 
 Notes:
 - `KMI_DRY_RUN=1` means upstream requests are simulated. Set to `0` for live traffic.
+- Manual `--rotate` updates `~/.kimi/config.toml` when `KMI_WRITE_CONFIG=1` and dry-run is off.
 - Remote proxy binding requires `KMI_PROXY_ALLOW_REMOTE=1` and `KMI_PROXY_TOKEN`.
 
 ## Paths

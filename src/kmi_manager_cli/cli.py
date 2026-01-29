@@ -9,11 +9,18 @@ from kmi_manager_cli.config import (
     DEFAULT_KMI_PROXY_LISTEN,
     DEFAULT_KMI_STATE_DIR,
     DEFAULT_KMI_DRY_RUN,
+    DEFAULT_KMI_WRITE_CONFIG,
     load_config,
 )
 from pathlib import Path
 
-from kmi_manager_cli.auth_accounts import Account, load_accounts_from_auths_dir, load_current_account
+from kmi_manager_cli.auth_accounts import (
+    Account,
+    load_accounts_from_auths_dir,
+    load_current_account,
+    resolve_provider_name,
+    update_provider_config,
+)
 from kmi_manager_cli.errors import no_keys_message, remediation_message
 from kmi_manager_cli.health import get_accounts_health, get_health_map
 from kmi_manager_cli.keys import Registry, load_auths_dir
@@ -32,6 +39,7 @@ APP_HELP = (
     f"  KMI_PROXY_BASE_PATH={DEFAULT_KMI_PROXY_BASE_PATH}\n"
     f"  KMI_STATE_DIR={DEFAULT_KMI_STATE_DIR}\n"
     f"  KMI_DRY_RUN={DEFAULT_KMI_DRY_RUN}\n"
+    f"  KMI_WRITE_CONFIG={DEFAULT_KMI_WRITE_CONFIG}\n"
     "Config file: .env (if present in working directory)\n"
     "Notes:\n"
     "  Auto-rotation must comply with provider ToS.\n"
@@ -71,6 +79,18 @@ def _manual_rotate(config) -> None:
         typer.echo(remediation_message())
         raise typer.Exit(code=1)
     save_state(config, state)
+    if rotated and config.write_config and not config.dry_run:
+        accounts = load_accounts_from_auths_dir(config.auths_dir, config.upstream_base_url)
+        account_map = {account.label: account for account in accounts}
+        selected = account_map.get(active.label)
+        api_key = selected.api_key if selected else active.api_key
+        base_url = selected.base_url if selected else config.upstream_base_url
+        config_path = _current_config_path()
+        provider = resolve_provider_name(config_path)
+        if update_provider_config(config_path, provider, api_key, base_url):
+            typer.echo(f"Updated ~/.kimi/config.toml provider \"{provider}\"")
+        else:
+            typer.echo("Warning: ~/.kimi/config.toml not found; rotation state updated only.")
     render_rotation_dashboard(active.label, registry, state, health=health, rotated=rotated, reason=reason, dry_run=config.dry_run)
 
 
