@@ -170,6 +170,44 @@ def test_rotate_manual_skips_when_current_best() -> None:
     assert state.active_index == 0
 
 
+def test_rotate_manual_tie_breaks_when_prefer_next() -> None:
+    registry = Registry(
+        keys=[
+            KeyRecord(label="a", api_key="sk-a"),
+            KeyRecord(label="b", api_key="sk-b"),
+        ],
+        active_index=0,
+    )
+    state = State(active_index=0)
+    health = {
+        "a": HealthInfo(
+            status="healthy",
+            remaining_percent=100.0,
+            used=None,
+            limit=None,
+            remaining=None,
+            reset_hint=None,
+            limits=[],
+            error_rate=0.0,
+        ),
+        "b": HealthInfo(
+            status="healthy",
+            remaining_percent=100.0,
+            used=None,
+            limit=None,
+            remaining=None,
+            reset_hint=None,
+            limits=[],
+            error_rate=0.0,
+        ),
+    }
+    key, rotated, reason = rotate_manual(registry, state, health=health, prefer_next_on_tie=True)
+    assert key.label == "b"
+    assert rotated is True
+    assert reason is not None
+    assert state.active_index == 1
+
+
 def test_rotate_manual_prefers_lower_error_when_usage_missing() -> None:
     registry = Registry(
         keys=[

@@ -44,7 +44,7 @@ rotate_app = typer.Typer(help="Rotation commands")
 
 def _ensure_single_mode(*flags: bool) -> None:
     if sum(1 for flag in flags if flag) > 1:
-        raise typer.BadParameter("Choose only one mode: --rotate, --auto_rotate, --trace, --all, or --health")
+        raise typer.BadParameter("Choose only one mode: --rotate, --auto_rotate, --trace, --all, --health, or --status")
 
 
 def _note_dry_run(config) -> None:
@@ -66,7 +66,7 @@ def _manual_rotate(config) -> None:
     state = load_state(config, registry)
     health = get_health_map(config, registry, state)
     try:
-        active, rotated, reason = rotate_manual(registry, state, health=health)
+        active, rotated, reason = rotate_manual(registry, state, health=health, prefer_next_on_tie=config.dry_run)
     except RuntimeError:
         typer.echo(remediation_message())
         raise typer.Exit(code=1)
@@ -92,6 +92,12 @@ def _current_config_path() -> Path:
 
 def _render_accounts_health(config) -> None:
     _note_dry_run(config)
+    registry = load_auths_dir(config.auths_dir, config.upstream_base_url)
+    state = load_state(config, registry)
+    if registry.keys:
+        idx = max(0, min(state.active_index, len(registry.keys) - 1))
+        active_label = registry.keys[idx].label if registry.keys else "none"
+        typer.echo(f"Active key: {active_label}")
     accounts = load_accounts_from_auths_dir(config.auths_dir, config.upstream_base_url)
     current = load_current_account(_current_config_path())
     if current:
@@ -99,13 +105,18 @@ def _render_accounts_health(config) -> None:
     if not accounts:
         typer.echo(no_keys_message(config))
         raise typer.Exit(code=1)
-    state = load_state(config, Registry(keys=[]))
     health = get_accounts_health(config, accounts, state, force_real=True)
     render_accounts_health_dashboard(accounts, state, health, dry_run=config.dry_run)
 
 
 def _render_current_health(config) -> None:
     _note_dry_run(config)
+    registry = load_auths_dir(config.auths_dir, config.upstream_base_url)
+    state = load_state(config, registry)
+    if registry.keys:
+        idx = max(0, min(state.active_index, len(registry.keys) - 1))
+        active_label = registry.keys[idx].label if registry.keys else "none"
+        typer.echo(f"Active key: {active_label}")
     current = load_current_account(_current_config_path())
     if not current:
         typer.echo("No current account found at ~/.kimi/config.toml")
@@ -123,9 +134,17 @@ def _render_current_health(config) -> None:
                 email=current.email,
             )
             break
-    state = load_state(config, Registry(keys=[]))
     health = get_accounts_health(config, [current], state, force_real=True)
     render_accounts_health_dashboard([current], state, health, dry_run=config.dry_run)
+
+
+def _render_status(config) -> None:
+    registry = _load_registry_or_exit(config)
+    state = load_state(config, registry)
+    idx = max(0, min(state.active_index, len(registry.keys) - 1))
+    active_label = registry.keys[idx].label if registry.keys else "none"
+    typer.echo(f"Active key: {active_label}")
+    typer.echo(f"Active index: {state.active_index} | Rotation index: {state.rotation_index} | Auto-rotate: {state.auto_rotate}")
 
 
 @app.callback(invoke_without_command=True)
@@ -141,12 +160,13 @@ def main_callback(
     trace: bool = typer.Option(False, "--trace", help="Show live trace window."),
     all_: bool = typer.Option(False, "--all", help="Show health of all keys."),
     health_flag: bool = typer.Option(False, "--health", help="Show health for current key only."),
+    status_flag: bool = typer.Option(False, "--status", help="Show current rotation status."),
 ) -> None:
     if ctx.invoked_subcommand:
         return
-    _ensure_single_mode(rotate, auto_rotate, trace, all_, health_flag)
+    _ensure_single_mode(rotate, auto_rotate, trace, all_, health_flag, status_flag)
 
-    if not any([rotate, auto_rotate, trace, all_, health_flag]):
+    if not any([rotate, auto_rotate, trace, all_, health_flag, status_flag]):
         typer.echo(ctx.get_help())
         raise typer.Exit()
 
@@ -165,6 +185,9 @@ def main_callback(
         raise typer.Exit()
     if health_flag:
         _render_current_health(config)
+        raise typer.Exit()
+    if status_flag:
+        _render_status(config)
         raise typer.Exit()
 
 
@@ -222,3 +245,10 @@ def health() -> None:
 
 
 app.add_typer(rotate_app, name="rotate")
+
+
+@app.command()
+def status() -> None:
+    """Show current rotation status."""
+    config = load_config()
+    _render_status(config)
