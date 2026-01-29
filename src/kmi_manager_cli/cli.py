@@ -1,0 +1,196 @@
+from __future__ import annotations
+
+import typer
+
+from kmi_manager_cli import __version__
+from kmi_manager_cli.config import (
+    DEFAULT_KMI_AUTHS_DIR,
+    DEFAULT_KMI_PROXY_BASE_PATH,
+    DEFAULT_KMI_PROXY_LISTEN,
+    DEFAULT_KMI_STATE_DIR,
+    load_config,
+)
+from pathlib import Path
+
+from kmi_manager_cli.auth_accounts import Account, load_accounts_from_auths_dir, load_current_account
+from kmi_manager_cli.errors import no_keys_message
+from kmi_manager_cli.health import get_accounts_health, get_health_map
+from kmi_manager_cli.keys import Registry, load_auths_dir
+from kmi_manager_cli.proxy import run_proxy
+from kmi_manager_cli.rotation import rotate_manual
+from kmi_manager_cli.state import load_state, save_state
+from kmi_manager_cli.trace_tui import run_trace_tui
+from kmi_manager_cli.ui import render_accounts_health_dashboard, render_health_dashboard, render_registry_table, render_rotation_dashboard
+
+APP_HELP = (
+    "KMI Manager CLI for rotation, proxy, and tracing.\n"
+    f"Version: {__version__}\n"
+    "Config defaults:\n"
+    f"  KMI_AUTHS_DIR={DEFAULT_KMI_AUTHS_DIR}\n"
+    f"  KMI_PROXY_LISTEN={DEFAULT_KMI_PROXY_LISTEN}\n"
+    f"  KMI_PROXY_BASE_PATH={DEFAULT_KMI_PROXY_BASE_PATH}\n"
+    f"  KMI_STATE_DIR={DEFAULT_KMI_STATE_DIR}\n"
+    "Config file: .env (if present in working directory)"
+)
+
+app = typer.Typer(add_completion=False, help=APP_HELP)
+rotate_app = typer.Typer(help="Rotation commands")
+
+
+def _ensure_single_mode(*flags: bool) -> None:
+    if sum(1 for flag in flags if flag) > 1:
+        raise typer.BadParameter("Choose only one mode: --rotate, --auto_rotate, --trace, or --all")
+
+
+def _load_registry_or_exit(config):
+    registry = load_auths_dir(config.auths_dir, config.upstream_base_url)
+    if not registry.keys:
+        typer.echo(no_keys_message(config))
+        raise typer.Exit(code=1)
+    return registry
+
+
+def _manual_rotate(config) -> None:
+    registry = _load_registry_or_exit(config)
+    state = load_state(config, registry)
+    health = get_health_map(config, registry, state)
+    active, rotated, reason = rotate_manual(registry, state, health=health)
+    save_state(config, state)
+    render_rotation_dashboard(active.label, registry, state, health=health, rotated=rotated, reason=reason)
+
+
+def _enable_auto_rotate(config) -> None:
+    if not config.auto_rotate_allowed:
+        typer.echo("Auto-rotation is disabled by policy (KMI_AUTO_ROTATE_ALLOWED=false).")
+        raise typer.Exit(code=1)
+    registry = _load_registry_or_exit(config)
+    state = load_state(config, registry)
+    state.auto_rotate = True
+    save_state(config, state)
+    typer.echo("Auto-rotation enabled (round-robin).")
+    typer.echo("Reminder: ensure your provider allows key pooling/rotation per ToS.")
+
+
+def _current_config_path() -> Path:
+    return Path.home() / ".kimi" / "config.toml"
+
+
+def _render_accounts_health(config) -> None:
+    accounts = load_accounts_from_auths_dir(config.auths_dir, config.upstream_base_url)
+    current = load_current_account(_current_config_path())
+    if current:
+        accounts = [current] + accounts
+    if not accounts:
+        typer.echo(no_keys_message(config))
+        raise typer.Exit(code=1)
+    state = load_state(config, Registry(keys=[]))
+    health = get_accounts_health(config, accounts, state, force_real=True)
+    render_accounts_health_dashboard(accounts, state, health)
+
+
+def _render_current_health(config) -> None:
+    current = load_current_account(_current_config_path())
+    if not current:
+        typer.echo("No current account found at ~/.kimi/config.toml")
+        raise typer.Exit(code=1)
+    # Try to map current to a known auth label without extra API calls.
+    accounts = load_accounts_from_auths_dir(config.auths_dir, config.upstream_base_url)
+    for account in accounts:
+        if account.base_url == current.base_url and account.api_key == current.api_key:
+            current = Account(
+                id=current.id,
+                label=f"current:{account.label}",
+                api_key=current.api_key,
+                base_url=current.base_url,
+                source=current.source,
+                email=current.email,
+            )
+            break
+    state = load_state(config, Registry(keys=[]))
+    health = get_accounts_health(config, [current], state, force_real=True)
+    render_accounts_health_dashboard([current], state, health)
+
+
+@app.callback(invoke_without_command=True)
+def main_callback(
+    ctx: typer.Context,
+    rotate: bool = typer.Option(False, "--rotate", help="Manually rotate to the most resourceful key."),
+    auto_rotate: bool = typer.Option(False, "--auto_rotate", help="Enable auto-rotation for proxy requests."),
+    trace: bool = typer.Option(False, "--trace", help="Show live trace window."),
+    all_: bool = typer.Option(False, "--all", help="Show health of all keys."),
+    health_flag: bool = typer.Option(False, "--health", help="Show health for current key only."),
+) -> None:
+    if ctx.invoked_subcommand:
+        return
+    _ensure_single_mode(rotate, auto_rotate, trace, all_, health_flag)
+
+    if not any([rotate, auto_rotate, trace, all_, health_flag]):
+        typer.echo(ctx.get_help())
+        raise typer.Exit()
+
+    config = load_config()  # ensure env is loaded early
+    if rotate:
+        _manual_rotate(config)
+        raise typer.Exit()
+    if auto_rotate:
+        _enable_auto_rotate(config)
+        raise typer.Exit()
+    if trace:
+        run_trace_tui(config)
+        raise typer.Exit()
+    if all_:
+        _render_accounts_health(config)
+        raise typer.Exit()
+    if health_flag:
+        _render_current_health(config)
+        raise typer.Exit()
+
+
+if __name__ == "__main__":
+    app()
+
+
+def main() -> None:
+    app()
+
+
+@app.command()
+def proxy() -> None:
+    """Start the local proxy server."""
+    config = load_config()
+    registry = _load_registry_or_exit(config)
+    state = load_state(config, registry)
+    typer.echo(f"Starting proxy at http://{config.proxy_listen}{config.proxy_base_path}")
+    run_proxy(config, registry, state)
+
+
+@app.command()
+def trace() -> None:
+    """Show live trace view."""
+    config = load_config()
+    run_trace_tui(config)
+
+
+@rotate_app.callback(invoke_without_command=True)
+def rotate_callback(ctx: typer.Context) -> None:
+    if ctx.invoked_subcommand:
+        return
+    config = load_config()
+    _manual_rotate(config)
+
+
+@rotate_app.command("auto")
+def rotate_auto() -> None:
+    """Enable auto-rotation."""
+    config = load_config()
+    _enable_auto_rotate(config)
+
+
+@app.command()
+def health() -> None:
+    """Show health for current key only."""
+    config = load_config()
+    _render_current_health(config)
+
+
+app.add_typer(rotate_app, name="rotate")
