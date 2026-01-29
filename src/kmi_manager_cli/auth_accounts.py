@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -275,82 +276,13 @@ def load_current_account(config_path: Path) -> Optional[Account]:
     )
 
 
-def resolve_provider_name(config_path: Path) -> str:
-    if not config_path.exists():
-        return _PROVIDER_ORDER[0]
-    config = _parse_toml(config_path)
-    root = config.get("__root__", {})
-    default_model = root.get("default_model") if root else None
-
-    provider_name = None
-    if default_model:
-        model_section = f"models.{default_model}"
-        model = config.get(model_section)
-        if model and model.get("provider"):
-            provider_name = _normalize_name(model.get("provider", ""))
-    if provider_name is None:
-        provider_name = _PROVIDER_ORDER[0]
-    return provider_name
-
-
-def update_provider_config(config_path: Path, provider_name: str, api_key: str, base_url: str) -> bool:
-    config_path = config_path.expanduser()
-    if not config_path.exists():
+def copy_account_config(source: str, dest: Path) -> bool:
+    src = Path(source).expanduser()
+    if not src.exists() or src.suffix.lower() != ".toml":
         return False
-
-    lines = config_path.read_text(errors="ignore").splitlines()
-    header_re = re.compile(r"^\\s*\\[providers\\.(\"?)(.+?)\\1\\]\\s*$")
-    start = None
-    for idx, line in enumerate(lines):
-        match = header_re.match(line)
-        if not match:
-            continue
-        name = _normalize_name(match.group(2))
-        if name == provider_name:
-            start = idx
-            break
-
-    def _needs_quotes(value: str) -> bool:
-        return not re.match(r"^[A-Za-z0-9_-]+$", value)
-
-    if start is None:
-        header = f'[providers.\"{provider_name}\"]' if _needs_quotes(provider_name) else f'[providers.{provider_name}]'
-        if lines and lines[-1].strip():
-            lines.append("")
-        lines.extend(
-            [
-                header,
-                'type = \"kimi\"',
-                f'base_url = \"{base_url}\"',
-                f'api_key = \"{api_key}\"',
-            ]
-        )
-        config_path.write_text("\n".join(lines) + "\n")
-        return True
-
-    end = len(lines)
-    for idx in range(start + 1, len(lines)):
-        if lines[idx].lstrip().startswith("["):
-            end = idx
-            break
-
-    found_base = False
-    found_key = False
-    for idx in range(start + 1, end):
-        if re.match(r"^\\s*base_url\\s*=", lines[idx]):
-            lines[idx] = f'base_url = \"{base_url}\"'
-            found_base = True
-        elif re.match(r"^\\s*api_key\\s*=", lines[idx]):
-            lines[idx] = f'api_key = \"{api_key}\"'
-            found_key = True
-
-    insert_at = end
-    if not found_base:
-        lines.insert(insert_at, f'base_url = \"{base_url}\"')
-        insert_at += 1
-        end += 1
-    if not found_key:
-        lines.insert(insert_at, f'api_key = \"{api_key}\"')
-
-    config_path.write_text("\n".join(lines) + "\n")
+    dest = dest.expanduser()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = dest.with_suffix(dest.suffix + ".tmp")
+    tmp_path.write_text(src.read_text(errors="ignore"), encoding="utf-8")
+    os.replace(tmp_path, dest)
     return True

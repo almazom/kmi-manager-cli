@@ -26,6 +26,7 @@ DEFAULT_KMI_TRACE_BACKUPS = 3
 DEFAULT_KMI_LOG_MAX_MB = 5
 DEFAULT_KMI_LOG_BACKUPS = 3
 DEFAULT_KMI_WRITE_CONFIG = True
+DEFAULT_KMI_ROTATE_ON_TIE = True
 
 
 def _parse_bool(value: Optional[str], default: bool) -> bool:
@@ -70,6 +71,7 @@ class Config:
     log_max_bytes: int = DEFAULT_KMI_LOG_MAX_MB * 1024 * 1024
     log_max_backups: int = DEFAULT_KMI_LOG_BACKUPS
     write_config: bool = DEFAULT_KMI_WRITE_CONFIG
+    rotate_on_tie: bool = DEFAULT_KMI_ROTATE_ON_TIE
 
 
 
@@ -115,6 +117,7 @@ def load_config(env_path: Optional[Path] = None) -> Config:
     log_max_mb = int(os.getenv("KMI_LOG_MAX_MB", str(DEFAULT_KMI_LOG_MAX_MB)))
     log_max_backups = int(os.getenv("KMI_LOG_BACKUPS", str(DEFAULT_KMI_LOG_BACKUPS)))
     write_config = _parse_bool(os.getenv("KMI_WRITE_CONFIG"), DEFAULT_KMI_WRITE_CONFIG)
+    rotate_on_tie = _parse_bool(os.getenv("KMI_ROTATE_ON_TIE"), DEFAULT_KMI_ROTATE_ON_TIE)
 
     return Config(
         auths_dir=auths_dir,
@@ -137,4 +140,5 @@ def load_config(env_path: Optional[Path] = None) -> Config:
         log_max_bytes=max(log_max_mb, 0) * 1024 * 1024,
         log_max_backups=max(log_max_backups, 0),
         write_config=write_config,
+        rotate_on_tie=rotate_on_tie,
     )
