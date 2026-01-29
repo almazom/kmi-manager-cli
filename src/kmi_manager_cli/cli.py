@@ -39,7 +39,7 @@ rotate_app = typer.Typer(help="Rotation commands")
 
 def _ensure_single_mode(*flags: bool) -> None:
     if sum(1 for flag in flags if flag) > 1:
-        raise typer.BadParameter("Choose only one mode: --rotate, --auto_rotate, --trace, or --all")
+        raise typer.BadParameter("Choose only one mode: --rotate, --auto_rotate, --trace, --all, or --health")
 
 
 def _load_registry_or_exit(config):
@@ -119,7 +119,12 @@ def _render_current_health(config) -> None:
 def main_callback(
     ctx: typer.Context,
     rotate: bool = typer.Option(False, "--rotate", help="Manually rotate to the most resourceful key."),
-    auto_rotate: bool = typer.Option(False, "--auto_rotate", help="Enable auto-rotation for proxy requests."),
+    auto_rotate: bool = typer.Option(
+        False,
+        "--auto_rotate",
+        "--auto-rotate",
+        help="Enable auto-rotation for proxy requests.",
+    ),
     trace: bool = typer.Option(False, "--trace", help="Show live trace window."),
     all_: bool = typer.Option(False, "--all", help="Show health of all keys."),
     health_flag: bool = typer.Option(False, "--health", help="Show health for current key only."),
@@ -192,9 +197,9 @@ def rotate_auto() -> None:
 
 @app.command()
 def health() -> None:
-    """Show health for current key only."""
+    """Show health of all keys."""
     config = load_config()
-    _render_current_health(config)
+    _render_accounts_health(config)
 
 
 app.add_typer(rotate_app, name="rotate")
