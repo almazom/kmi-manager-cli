@@ -66,7 +66,7 @@ def _status_meta(status: str) -> tuple[str, str, str, int]:
     if status == "warn":
         return "WARN", "orange3", "🟧", 1
     if status in {"blocked", "exhausted"}:
-        return "EXCAUSTED", "red", "🔴", 2
+        return "EXHAUSTED", "red", "🔴", 2
     if status == "disabled":
         return "DISABLED", "red", "🔴", 2
     return "UNKNOWN", "dim", "⚪", 3
@@ -456,16 +456,26 @@ def render_accounts_health_dashboard(accounts: list[Account], state: State, heal
 
     for row in rows:
         highlight = row.get("highlight_next", False)
-        if row["status"] in {"blocked", "exhausted", "disabled"}:
-            row["display_status"] = "EXCAUSTED"
+        if row["status"] in {"blocked", "exhausted"}:
+            row["display_status"] = "EXHAUSTED"
             row["display_icon"] = "🔴"
             row["display_color"] = "red"
             row["display_group"] = 3
-        elif highlight:
-            row["display_status"] = "NEXT"
+        elif row["status"] == "disabled":
+            row["display_status"] = "DISABLED"
+            row["display_icon"] = "🔴"
+            row["display_color"] = "red"
+            row["display_group"] = 3
+        elif row["status"] == "warn":
+            row["display_status"] = "WARN"
             row["display_icon"] = "🟧"
             row["display_color"] = "orange3"
             row["display_group"] = 1
+        elif highlight:
+            row["display_status"] = "NEXT"
+            row["display_icon"] = "🟢"
+            row["display_color"] = "green"
+            row["display_group"] = 2
         else:
             row["display_status"] = "OK"
             row["display_icon"] = "🟢"
