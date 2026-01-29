@@ -126,6 +126,8 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
         headers = dict(request.headers)
         headers.pop("host", None)
         headers.pop("content-length", None)
+        headers.pop("authorization", None)
+        headers.pop("x-kmi-proxy-token", None)
         headers["authorization"] = f"Bearer {api_key}"
         body = await request.body()
 
