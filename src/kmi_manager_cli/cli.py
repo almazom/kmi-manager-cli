@@ -30,7 +30,10 @@ APP_HELP = (
     f"  KMI_PROXY_LISTEN={DEFAULT_KMI_PROXY_LISTEN}\n"
     f"  KMI_PROXY_BASE_PATH={DEFAULT_KMI_PROXY_BASE_PATH}\n"
     f"  KMI_STATE_DIR={DEFAULT_KMI_STATE_DIR}\n"
-    "Config file: .env (if present in working directory)"
+    "Config file: .env (if present in working directory)\n"
+    "Notes:\n"
+    "  Auto-rotation must comply with provider ToS.\n"
+    "  Remote proxy binding requires KMI_PROXY_ALLOW_REMOTE=1 and KMI_PROXY_TOKEN."
 )
 
 app = typer.Typer(add_completion=False, help=APP_HELP)
