@@ -24,9 +24,31 @@ def trace_path(config: Config) -> Path:
     return path
 
 
+def _rotate_trace(path: Path, max_backups: int) -> None:
+    if max_backups <= 0:
+        if path.exists():
+            path.unlink()
+        return
+    for idx in range(max_backups, 0, -1):
+        src = path.with_suffix(path.suffix + f".{idx}")
+        dst = path.with_suffix(path.suffix + f".{idx + 1}")
+        if src.exists():
+            src.replace(dst)
+    if path.exists():
+        path.replace(path.with_suffix(path.suffix + ".1"))
+
+
+def _rotate_trace_if_needed(path: Path, max_bytes: int, max_backups: int) -> None:
+    if max_bytes <= 0:
+        return
+    if path.exists() and path.stat().st_size >= max_bytes:
+        _rotate_trace(path, max_backups)
+
+
 def append_trace(config: Config, entry: dict) -> None:
     path = trace_path(config)
     with file_lock(path):
+        _rotate_trace_if_needed(path, config.trace_max_bytes, config.trace_max_backups)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=True) + "\n")
 

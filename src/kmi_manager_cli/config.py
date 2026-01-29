@@ -21,6 +21,10 @@ DEFAULT_KMI_PROXY_MAX_RPS = 0
 DEFAULT_KMI_PROXY_MAX_RPM = 0
 DEFAULT_KMI_PROXY_RETRY_MAX = 0
 DEFAULT_KMI_PROXY_RETRY_BASE_MS = 250
+DEFAULT_KMI_TRACE_MAX_MB = 5
+DEFAULT_KMI_TRACE_BACKUPS = 3
+DEFAULT_KMI_LOG_MAX_MB = 5
+DEFAULT_KMI_LOG_BACKUPS = 3
 
 
 def _parse_bool(value: Optional[str], default: bool) -> bool:
@@ -60,6 +64,10 @@ class Config:
     proxy_retry_max: int
     proxy_retry_base_ms: int
     env_path: Optional[Path] = None
+    trace_max_bytes: int = DEFAULT_KMI_TRACE_MAX_MB * 1024 * 1024
+    trace_max_backups: int = DEFAULT_KMI_TRACE_BACKUPS
+    log_max_bytes: int = DEFAULT_KMI_LOG_MAX_MB * 1024 * 1024
+    log_max_backups: int = DEFAULT_KMI_LOG_BACKUPS
 
 
 
@@ -100,6 +108,10 @@ def load_config(env_path: Optional[Path] = None) -> Config:
     proxy_max_rpm = int(os.getenv("KMI_PROXY_MAX_RPM", str(DEFAULT_KMI_PROXY_MAX_RPM)))
     proxy_retry_max = int(os.getenv("KMI_PROXY_RETRY_MAX", str(DEFAULT_KMI_PROXY_RETRY_MAX)))
     proxy_retry_base_ms = int(os.getenv("KMI_PROXY_RETRY_BASE_MS", str(DEFAULT_KMI_PROXY_RETRY_BASE_MS)))
+    trace_max_mb = int(os.getenv("KMI_TRACE_MAX_MB", str(DEFAULT_KMI_TRACE_MAX_MB)))
+    trace_max_backups = int(os.getenv("KMI_TRACE_BACKUPS", str(DEFAULT_KMI_TRACE_BACKUPS)))
+    log_max_mb = int(os.getenv("KMI_LOG_MAX_MB", str(DEFAULT_KMI_LOG_MAX_MB)))
+    log_max_backups = int(os.getenv("KMI_LOG_BACKUPS", str(DEFAULT_KMI_LOG_BACKUPS)))
 
     return Config(
         auths_dir=auths_dir,
@@ -117,4 +129,8 @@ def load_config(env_path: Optional[Path] = None) -> Config:
         proxy_retry_max=proxy_retry_max,
         proxy_retry_base_ms=proxy_retry_base_ms,
         env_path=env_path,
+        trace_max_bytes=max(trace_max_mb, 0) * 1024 * 1024,
+        trace_max_backups=max(trace_max_backups, 0),
+        log_max_bytes=max(log_max_mb, 0) * 1024 * 1024,
+        log_max_backups=max(log_max_backups, 0),
     )
