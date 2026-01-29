@@ -48,11 +48,14 @@ def render_rotation_dashboard(
     health: Optional[dict[str, HealthInfo]] = None,
     rotated: bool = True,
     reason: Optional[str] = None,
+    dry_run: bool = False,
 ) -> None:
     if rotated:
         console.print("Rotation complete")
     else:
         console.print("Rotation skipped")
+    if dry_run:
+        console.print("DRY RUN: upstream requests are simulated.")
     if reason:
         console.print(f"Reason: {reason}")
     console.print(f"Active key: {active_label}")
@@ -156,10 +159,12 @@ def _msk_now() -> str:
     return (datetime.now(timezone.utc) + timedelta(hours=3)).strftime("%Y-%m-%d %H:%M")
 
 
-def render_health_dashboard(registry: Registry, state: State, health: dict[str, HealthInfo]) -> None:
+def render_health_dashboard(registry: Registry, state: State, health: dict[str, HealthInfo], dry_run: bool = False) -> None:
     ok = warn = red = unknown = 0
     best_label = None
     best_remaining = -1.0
+    if dry_run:
+        console.print("DRY RUN: upstream requests are simulated.")
 
     rows = []
     for key in registry.keys:
@@ -305,9 +310,13 @@ def _limit_title(limit: LimitInfo) -> str:
     return "Limit"
 
 
-def render_accounts_health_dashboard(accounts: list[Account], state: State, health: dict[str, HealthInfo]) -> None:
+def render_accounts_health_dashboard(
+    accounts: list[Account], state: State, health: dict[str, HealthInfo], dry_run: bool = False
+) -> None:
     ok = warn = red = unknown = 0
     show_source = os.getenv("KMI_SHOW_SOURCE") == "1"
+    if dry_run:
+        console.print("DRY RUN: upstream requests are simulated.")
     rows = []
     aliases: dict[tuple[str, str], list[str]] = {}
     for account in accounts:

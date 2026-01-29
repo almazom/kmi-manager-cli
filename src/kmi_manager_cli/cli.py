@@ -8,6 +8,7 @@ from kmi_manager_cli.config import (
     DEFAULT_KMI_PROXY_BASE_PATH,
     DEFAULT_KMI_PROXY_LISTEN,
     DEFAULT_KMI_STATE_DIR,
+    DEFAULT_KMI_DRY_RUN,
     load_config,
 )
 from pathlib import Path
@@ -30,6 +31,7 @@ APP_HELP = (
     f"  KMI_PROXY_LISTEN={DEFAULT_KMI_PROXY_LISTEN}\n"
     f"  KMI_PROXY_BASE_PATH={DEFAULT_KMI_PROXY_BASE_PATH}\n"
     f"  KMI_STATE_DIR={DEFAULT_KMI_STATE_DIR}\n"
+    f"  KMI_DRY_RUN={DEFAULT_KMI_DRY_RUN}\n"
     "Config file: .env (if present in working directory)\n"
     "Notes:\n"
     "  Auto-rotation must comply with provider ToS.\n"
@@ -45,6 +47,11 @@ def _ensure_single_mode(*flags: bool) -> None:
         raise typer.BadParameter("Choose only one mode: --rotate, --auto_rotate, --trace, --all, or --health")
 
 
+def _note_dry_run(config) -> None:
+    if config.dry_run:
+        typer.echo("NOTE: KMI_DRY_RUN=1 (dry-run enabled; upstream requests are simulated).")
+
+
 def _load_registry_or_exit(config):
     registry = load_auths_dir(config.auths_dir, config.upstream_base_url)
     if not registry.keys:
@@ -54,6 +61,7 @@ def _load_registry_or_exit(config):
 
 
 def _manual_rotate(config) -> None:
+    _note_dry_run(config)
     registry = _load_registry_or_exit(config)
     state = load_state(config, registry)
     health = get_health_map(config, registry, state)
@@ -63,7 +71,7 @@ def _manual_rotate(config) -> None:
         typer.echo(remediation_message())
         raise typer.Exit(code=1)
     save_state(config, state)
-    render_rotation_dashboard(active.label, registry, state, health=health, rotated=rotated, reason=reason)
+    render_rotation_dashboard(active.label, registry, state, health=health, rotated=rotated, reason=reason, dry_run=config.dry_run)
 
 
 def _enable_auto_rotate(config) -> None:
@@ -83,6 +91,7 @@ def _current_config_path() -> Path:
 
 
 def _render_accounts_health(config) -> None:
+    _note_dry_run(config)
     accounts = load_accounts_from_auths_dir(config.auths_dir, config.upstream_base_url)
     current = load_current_account(_current_config_path())
     if current:
@@ -92,10 +101,11 @@ def _render_accounts_health(config) -> None:
         raise typer.Exit(code=1)
     state = load_state(config, Registry(keys=[]))
     health = get_accounts_health(config, accounts, state, force_real=True)
-    render_accounts_health_dashboard(accounts, state, health)
+    render_accounts_health_dashboard(accounts, state, health, dry_run=config.dry_run)
 
 
 def _render_current_health(config) -> None:
+    _note_dry_run(config)
     current = load_current_account(_current_config_path())
     if not current:
         typer.echo("No current account found at ~/.kimi/config.toml")
@@ -115,7 +125,7 @@ def _render_current_health(config) -> None:
             break
     state = load_state(config, Registry(keys=[]))
     health = get_accounts_health(config, [current], state, force_real=True)
-    render_accounts_health_dashboard([current], state, health)
+    render_accounts_health_dashboard([current], state, health, dry_run=config.dry_run)
 
 
 @app.callback(invoke_without_command=True)
@@ -170,6 +180,7 @@ def main() -> None:
 def proxy() -> None:
     """Start the local proxy server."""
     config = load_config()
+    _note_dry_run(config)
     registry = _load_registry_or_exit(config)
     state = load_state(config, registry)
     typer.echo(f"Starting proxy at http://{config.proxy_listen}{config.proxy_base_path}")
@@ -184,6 +195,7 @@ def proxy() -> None:
 def trace() -> None:
     """Show live trace view."""
     config = load_config()
+    _note_dry_run(config)
     run_trace_tui(config)
 
 

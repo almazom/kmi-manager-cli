@@ -50,6 +50,8 @@ def _build_table(entries: list[dict], window: int) -> Table:
 
 def run_trace_tui(config: Config, window: int = 200, refresh_seconds: float = 1.0) -> None:
     path = trace_path(config)
+    if config.dry_run:
+        console.print("DRY RUN: upstream requests are simulated.")
     console.print(f"Tracing {path} (Ctrl+C to exit)")
     try:
         with Live(_build_table([], window), refresh_per_second=4, console=console) as live:
