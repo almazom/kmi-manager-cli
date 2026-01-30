@@ -1,0 +1,204 @@
+{
+  "version": "1.0",
+  "feature": "kmi-rotation",
+  "overall_status": "COMPLETE",
+  "started_at": "2026-01-29T08:44:23Z",
+  "completed_at": "2026-01-29T09:06:10Z",
+  "current_card": "10",
+  "agent_session_id": "session_1769676263",
+  "cards": {
+    "01": {
+      "status": "completed",
+      "title": "Config + CLI scaffold",
+      "started_at": "2026-01-29T08:44:23Z",
+      "completed_at": "2026-01-29T08:47:47Z",
+      "error": null
+    },
+    "02": {
+      "status": "completed",
+      "title": "Key registry + _auths loader",
+      "started_at": "2026-01-29T08:48:12Z",
+      "completed_at": "2026-01-29T08:49:54Z",
+      "error": null
+    },
+    "03": {
+      "status": "completed",
+      "title": "Proxy routing + unique base path",
+      "started_at": "2026-01-29T08:50:18Z",
+      "completed_at": "2026-01-29T08:51:44Z",
+      "error": null
+    },
+    "04": {
+      "status": "completed",
+      "title": "Manual rotation + dashboard",
+      "started_at": "2026-01-29T08:52:10Z",
+      "completed_at": "2026-01-29T08:53:10Z",
+      "error": null
+    },
+    "05": {
+      "status": "completed",
+      "title": "Auto rotation engine",
+      "started_at": "2026-01-29T08:53:32Z",
+      "completed_at": "2026-01-29T08:55:53Z",
+      "error": null
+    },
+    "06": {
+      "status": "completed",
+      "title": "Health + usage scoring",
+      "started_at": "2026-01-29T08:56:17Z",
+      "completed_at": "2026-01-29T08:58:27Z",
+      "error": null
+    },
+    "07": {
+      "status": "completed",
+      "title": "Trace logs + TUI",
+      "started_at": "2026-01-29T08:58:53Z",
+      "completed_at": "2026-01-29T09:00:21Z",
+      "error": null
+    },
+    "08": {
+      "status": "completed",
+      "title": "Error handling + logging",
+      "started_at": "2026-01-29T09:00:46Z",
+      "completed_at": "2026-01-29T09:02:52Z",
+      "error": null
+    },
+    "09": {
+      "status": "completed",
+      "title": "Global install + kmi --help",
+      "started_at": "2026-01-29T09:03:17Z",
+      "completed_at": "2026-01-29T09:05:25Z",
+      "error": null
+    },
+    "10": {
+      "status": "completed",
+      "title": "Manual E2E + docs",
+      "started_at": "2026-01-29T09:05:52Z",
+      "completed_at": "2026-01-29T09:06:10Z",
+      "error": null
+    }
+  },
+  "progress": {
+    "completed": 10,
+    "total": 10,
+    "percentage": 100,
+    "story_points_completed": 30,
+    "story_points_total": 30
+  },
+  "execution_log": [
+    {
+      "ts": "2026-01-29T08:47:47Z",
+      "card": "01",
+      "status": "completed",
+      "message": "Config + CLI scaffold complete"
+    },
+    {
+      "ts": "2026-01-29T08:48:12Z",
+      "card": "02",
+      "status": "in_progress",
+      "message": "Key registry + _auths loader started"
+    },
+    {
+      "ts": "2026-01-29T08:49:54Z",
+      "card": "02",
+      "status": "completed",
+      "message": "Key registry + _auths loader complete"
+    },
+    {
+      "ts": "2026-01-29T08:50:18Z",
+      "card": "03",
+      "status": "in_progress",
+      "message": "Proxy routing + unique base path started"
+    },
+    {
+      "ts": "2026-01-29T08:51:44Z",
+      "card": "03",
+      "status": "completed",
+      "message": "Proxy routing + unique base path complete"
+    },
+    {
+      "ts": "2026-01-29T08:52:10Z",
+      "card": "04",
+      "status": "in_progress",
+      "message": "Manual rotation + dashboard started"
+    },
+    {
+      "ts": "2026-01-29T08:53:10Z",
+      "card": "04",
+      "status": "completed",
+      "message": "Manual rotation + dashboard complete"
+    },
+    {
+      "ts": "2026-01-29T08:53:32Z",
+      "card": "05",
+      "status": "in_progress",
+      "message": "Auto rotation engine started"
+    },
+    {
+      "ts": "2026-01-29T08:55:53Z",
+      "card": "05",
+      "status": "completed",
+      "message": "Auto rotation engine complete"
+    },
+    {
+      "ts": "2026-01-29T08:56:17Z",
+      "card": "06",
+      "status": "in_progress",
+      "message": "Health + usage scoring started"
+    },
+    {
+      "ts": "2026-01-29T08:58:27Z",
+      "card": "06",
+      "status": "completed",
+      "message": "Health + usage scoring complete"
+    },
+    {
+      "ts": "2026-01-29T08:58:53Z",
+      "card": "07",
+      "status": "in_progress",
+      "message": "Trace logs + TUI started"
+    },
+    {
+      "ts": "2026-01-29T09:00:21Z",
+      "card": "07",
+      "status": "completed",
+      "message": "Trace logs + TUI complete"
+    },
+    {
+      "ts": "2026-01-29T09:00:46Z",
+      "card": "08",
+      "status": "in_progress",
+      "message": "Error handling + logging started"
+    },
+    {
+      "ts": "2026-01-29T09:02:52Z",
+      "card": "08",
+      "status": "completed",
+      "message": "Error handling + logging complete"
+    },
+    {
+      "ts": "2026-01-29T09:03:17Z",
+      "card": "09",
+      "status": "in_progress",
+      "message": "Global install + kmi --help started"
+    },
+    {
+      "ts": "2026-01-29T09:05:25Z",
+      "card": "09",
+      "status": "completed",
+      "message": "Global install + kmi --help complete"
+    },
+    {
+      "ts": "2026-01-29T09:05:52Z",
+      "card": "10",
+      "status": "in_progress",
+      "message": "Manual E2E + docs started"
+    },
+    {
+      "ts": "2026-01-29T09:06:10Z",
+      "card": "10",
+      "status": "completed",
+      "message": "Manual E2E + docs complete"
+    }
+  ]
+}
