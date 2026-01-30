@@ -50,7 +50,11 @@ def _build_view(entries: list[dict], window: int) -> Panel:
         key = str(entry.get("key_label", ""))
         endpoint = str(entry.get("endpoint", ""))
         status = str(entry.get("status", ""))
-        lines.append(f"{ts_short} | {req_id} | {method} | {key} | {endpoint} | {status}")
+        hint = str(entry.get("prompt_hint", "")).strip()
+        line = f"{ts_short} | {req_id} | {method} | {key} | {endpoint} | {status}"
+        if hint:
+            line = f"{line} | {hint}"
+        lines.append(line)
 
     body = Text("\n".join(lines) if lines else "no entries")
     footer = f"keys: {distribution}" + (f" | {warning}" if warning else "")
