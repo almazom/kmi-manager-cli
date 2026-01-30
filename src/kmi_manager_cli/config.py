@@ -15,6 +15,7 @@ DEFAULT_KMI_UPSTREAM_BASE_URL = "https://api.kimi.com/coding/v1"
 DEFAULT_KMI_STATE_DIR = "~/.kmi"
 DEFAULT_KMI_DRY_RUN = True
 DEFAULT_KMI_AUTO_ROTATE_ALLOWED = False
+DEFAULT_KMI_AUTO_ROTATE_E2E = True
 DEFAULT_KMI_ROTATION_COOLDOWN_SECONDS = 300
 DEFAULT_KMI_PROXY_ALLOW_REMOTE = False
 DEFAULT_KMI_PROXY_TOKEN = ""
@@ -125,6 +126,7 @@ class Config:
     proxy_max_rps_per_key: int = DEFAULT_KMI_PROXY_MAX_RPS_PER_KEY
     proxy_max_rpm_per_key: int = DEFAULT_KMI_PROXY_MAX_RPM_PER_KEY
     time_zone: str = DEFAULT_KMI_TIMEZONE
+    auto_rotate_e2e: bool = DEFAULT_KMI_AUTO_ROTATE_E2E
 
 
 
@@ -161,6 +163,7 @@ def load_config(env_path: Optional[Path] = None) -> Config:
     state_dir = Path(os.getenv("KMI_STATE_DIR", DEFAULT_KMI_STATE_DIR)).expanduser()
     dry_run = _parse_bool(os.getenv("KMI_DRY_RUN"), DEFAULT_KMI_DRY_RUN)
     auto_rotate_allowed = _parse_bool(os.getenv("KMI_AUTO_ROTATE_ALLOWED"), DEFAULT_KMI_AUTO_ROTATE_ALLOWED)
+    auto_rotate_e2e = _parse_bool(os.getenv("KMI_AUTO_ROTATE_E2E"), DEFAULT_KMI_AUTO_ROTATE_E2E)
     cooldown = int(os.getenv("KMI_ROTATION_COOLDOWN_SECONDS", str(DEFAULT_KMI_ROTATION_COOLDOWN_SECONDS)))
     proxy_allow_remote = _parse_bool(os.getenv("KMI_PROXY_ALLOW_REMOTE"), DEFAULT_KMI_PROXY_ALLOW_REMOTE)
     proxy_token = os.getenv("KMI_PROXY_TOKEN", DEFAULT_KMI_PROXY_TOKEN)
@@ -189,6 +192,7 @@ def load_config(env_path: Optional[Path] = None) -> Config:
         state_dir=state_dir,
         dry_run=dry_run,
         auto_rotate_allowed=auto_rotate_allowed,
+        auto_rotate_e2e=auto_rotate_e2e,
         rotation_cooldown_seconds=cooldown,
         proxy_allow_remote=proxy_allow_remote,
         proxy_token=proxy_token,

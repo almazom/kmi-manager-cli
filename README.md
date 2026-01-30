@@ -41,6 +41,7 @@ Notes:
 - `.env` is loaded from the project root (override with `KMI_ENV_PATH`).
 - `KMI_UPSTREAM_ALLOWLIST` can restrict upstream hosts (comma-separated, supports `*.domain`).
 - Auto-rotation is opt-in; set `KMI_AUTO_ROTATE_ALLOWED=1` before enabling.
+- Auto-rotation runs E2E by default; set `KMI_AUTO_ROTATE_E2E=0` to skip.
 - Remote proxy binding requires `KMI_PROXY_ALLOW_REMOTE=1` and `KMI_PROXY_TOKEN`.
 - For non-local proxy binding, run behind TLS and set `KMI_PROXY_TLS_TERMINATED=1` (or set `KMI_PROXY_REQUIRE_TLS=0` to override).
 - Optional per-key limits: `KMI_PROXY_MAX_RPS_PER_KEY` and `KMI_PROXY_MAX_RPM_PER_KEY`.

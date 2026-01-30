@@ -40,6 +40,16 @@ from kmi_manager_cli.trace import compute_confidence, compute_distribution, trac
 from kmi_manager_cli.trace_tui import run_trace_tui
 from kmi_manager_cli.ui import render_accounts_health_dashboard, render_health_dashboard, render_registry_table, render_rotation_dashboard
 
+DEFAULT_E2E_REQUESTS = 50
+DEFAULT_E2E_BATCH = 10
+DEFAULT_E2E_WINDOW = 50
+DEFAULT_E2E_ENDPOINT = "/models"
+DEFAULT_E2E_MIN_CONFIDENCE = 95.0
+DEFAULT_E2E_TIMEOUT = 10.0
+DEFAULT_E2E_PAUSE = 0.5
+DEFAULT_E2E_SCHEME = "http"
+
+
 APP_HELP = (
     "KMI Manager CLI for rotation, proxy, and tracing.\n"
     f"Version: {__version__}\n"
@@ -49,12 +59,16 @@ APP_HELP = (
     f"  KMI_PROXY_BASE_PATH={DEFAULT_KMI_PROXY_BASE_PATH}\n"
     f"  KMI_STATE_DIR={DEFAULT_KMI_STATE_DIR}\n"
     f"  KMI_DRY_RUN={DEFAULT_KMI_DRY_RUN}\n"
+    "  KMI_AUTO_ROTATE_E2E=1\n"
     f"  KMI_WRITE_CONFIG={DEFAULT_KMI_WRITE_CONFIG}\n"
     f"  KMI_ROTATE_ON_TIE={DEFAULT_KMI_ROTATE_ON_TIE}\n"
-    "Config file: .env in current project (override with KMI_ENV_PATH)\n"
+    "\n"
+    "Config file: .env (override with KMI_ENV_PATH)\n"
+    "\n"
     "Notes:\n"
     "  Auto-rotation must comply with provider ToS.\n"
     "  Auto-rotation is opt-in; set KMI_AUTO_ROTATE_ALLOWED=1 to enable.\n"
+    "  Auto-rotation runs E2E by default; set KMI_AUTO_ROTATE_E2E=0 to skip.\n"
     "  Remote proxy binding requires KMI_PROXY_ALLOW_REMOTE=1 and KMI_PROXY_TOKEN.\n"
     "  For non-local binding, set KMI_PROXY_TLS_TERMINATED=1 (or KMI_PROXY_REQUIRE_TLS=0)."
 )
@@ -295,6 +309,19 @@ def main_callback(
         raise typer.Exit()
     if auto_rotate:
         _enable_auto_rotate(config)
+        if config.auto_rotate_e2e:
+            _run_e2e(
+                config,
+                requests=DEFAULT_E2E_REQUESTS,
+                batch=DEFAULT_E2E_BATCH,
+                window=DEFAULT_E2E_WINDOW,
+                endpoint=DEFAULT_E2E_ENDPOINT,
+                min_confidence=DEFAULT_E2E_MIN_CONFIDENCE,
+                timeout=DEFAULT_E2E_TIMEOUT,
+                pause=DEFAULT_E2E_PAUSE,
+                scheme=DEFAULT_E2E_SCHEME,
+                enable_auto_rotate=False,
+            )
         raise typer.Exit()
     if trace:
         run_trace_tui(config)
@@ -374,31 +401,34 @@ def _format_counts(counts: dict[str, int]) -> str:
     return ", ".join(f"{label}:{count}" for label, count in sorted(counts.items()))
 
 
-@app.command()
-def e2e(
-    requests: int = typer.Option(50, "--requests", "-n", help="Total requests to send."),
-    batch: int = typer.Option(10, "--batch", help="Requests per batch."),
-    window: int = typer.Option(50, "--window", help="Window size for confidence."),
-    endpoint: str = typer.Option("/models", "--endpoint", help="Endpoint path to hit via proxy."),
-    min_confidence: float = typer.Option(95.0, "--min-confidence", help="Target confidence threshold."),
-    timeout: float = typer.Option(10.0, "--timeout", help="Per-request timeout (seconds)."),
-    pause: float = typer.Option(0.5, "--pause", help="Pause between batches (seconds)."),
-    scheme: str = typer.Option("http", "--scheme", help="Proxy scheme (http or https)."),
-) -> None:
-    """Run a round-robin proxy E2E check."""
+def _run_e2e(
+    config: Config,
+    *,
+    requests: int,
+    batch: int,
+    window: int,
+    endpoint: str,
+    min_confidence: float,
+    timeout: float,
+    pause: float,
+    scheme: str,
+    show_mode: bool = True,
+    enable_auto_rotate: bool = True,
+) -> float:
     if requests <= 0 or batch <= 0 or window <= 0:
         raise typer.BadParameter("--requests, --batch, and --window must be positive")
     scheme = scheme.lower()
     if scheme not in {"http", "https"}:
         raise typer.BadParameter("--scheme must be 'http' or 'https'")
-    config = _load_config_or_exit()
-    _note_mode(config)
+    if show_mode:
+        _note_mode(config)
     if not config.auto_rotate_allowed:
         typer.echo("Auto-rotation is disabled by policy (KMI_AUTO_ROTATE_ALLOWED=false).")
         raise typer.Exit(code=1)
-    registry = _load_registry_or_exit(config)
-    _enable_auto_rotate(config)
+    if enable_auto_rotate:
+        _enable_auto_rotate(config)
 
+    registry = _load_registry_or_exit(config)
     host, port = parse_listen(config.proxy_listen)
     connect_host = _normalize_connect_host(host)
     started_proc = None
@@ -478,6 +508,34 @@ def e2e(
         typer.echo(f"E2E OK: confidence={confidence}%")
     else:
         typer.echo(f"E2E WARN: confidence={confidence}% < {min_confidence}%")
+    return confidence
+
+
+@app.command()
+def e2e(
+    requests: int = typer.Option(DEFAULT_E2E_REQUESTS, "--requests", "-n", help="Total requests to send."),
+    batch: int = typer.Option(DEFAULT_E2E_BATCH, "--batch", help="Requests per batch."),
+    window: int = typer.Option(DEFAULT_E2E_WINDOW, "--window", help="Window size for confidence."),
+    endpoint: str = typer.Option(DEFAULT_E2E_ENDPOINT, "--endpoint", help="Endpoint path to hit via proxy."),
+    min_confidence: float = typer.Option(DEFAULT_E2E_MIN_CONFIDENCE, "--min-confidence", help="Target confidence threshold."),
+    timeout: float = typer.Option(DEFAULT_E2E_TIMEOUT, "--timeout", help="Per-request timeout (seconds)."),
+    pause: float = typer.Option(DEFAULT_E2E_PAUSE, "--pause", help="Pause between batches (seconds)."),
+    scheme: str = typer.Option(DEFAULT_E2E_SCHEME, "--scheme", help="Proxy scheme (http or https)."),
+) -> None:
+    """Run a round-robin proxy E2E check."""
+    config = _load_config_or_exit()
+    _run_e2e(
+        config,
+        requests=requests,
+        batch=batch,
+        window=window,
+        endpoint=endpoint,
+        min_confidence=min_confidence,
+        timeout=timeout,
+        pause=pause,
+        scheme=scheme,
+        enable_auto_rotate=True,
+    )
 
 
 @app.command()
@@ -502,6 +560,20 @@ def rotate_auto() -> None:
     config = _load_config_or_exit()
     _note_mode(config)
     _enable_auto_rotate(config)
+    if config.auto_rotate_e2e:
+        _run_e2e(
+            config,
+            requests=DEFAULT_E2E_REQUESTS,
+            batch=DEFAULT_E2E_BATCH,
+            window=DEFAULT_E2E_WINDOW,
+            endpoint=DEFAULT_E2E_ENDPOINT,
+            min_confidence=DEFAULT_E2E_MIN_CONFIDENCE,
+            timeout=DEFAULT_E2E_TIMEOUT,
+            pause=DEFAULT_E2E_PAUSE,
+            scheme=DEFAULT_E2E_SCHEME,
+            show_mode=False,
+            enable_auto_rotate=False,
+        )
 
 
 @rotate_app.command("off")
