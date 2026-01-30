@@ -48,5 +48,5 @@ def test_upstream_allowlist_blocks_untrusted(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.chdir(tmp_path)
     (tmp_path / DEFAULT_KMI_AUTHS_DIR).mkdir()
 
-    with pytest.raises(ValueError, match="allowlist"):
+    with pytest.raises(ValueError, match="ALLOWLIST"):
         load_config(env_path=tmp_path / "missing.env")
