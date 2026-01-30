@@ -4,8 +4,6 @@ import os
 import stat
 from pathlib import Path
 
-from kmi_manager_cli.logging import log_event
-
 
 def is_insecure_permissions(path: Path) -> bool:
     if os.name == "nt":
@@ -19,4 +17,7 @@ def is_insecure_permissions(path: Path) -> bool:
 
 def warn_if_insecure(path: Path, logger, label: str) -> None:
     if is_insecure_permissions(path):
-        log_event(logger, "insecure_permissions", path=str(path), label=label)
+        try:
+            logger.warning("insecure_permissions", extra={"path": str(path), "label": label})
+        except Exception:
+            logger.warning("insecure_permissions: %s (%s)", path, label)
