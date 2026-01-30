@@ -137,6 +137,11 @@ class StateWriter:
 
     async def mark_dirty(self) -> None:
         self._dirty = True
+        if self._task is None:
+            async with self.lock:
+                save_state(self.config, self.state)
+            self._dirty = False
+            return
         self._flush.set()
 
     async def stop(self) -> None:
@@ -172,6 +177,12 @@ class TraceWriter:
             self._task = asyncio.create_task(self._run())
 
     def enqueue(self, entry: dict) -> None:
+        if self._task is None:
+            try:
+                append_trace(self.config, entry)
+            except Exception as exc:  # pragma: no cover - defensive
+                log_event(self.logger, "trace_write_failed", error=str(exc))
+            return
         if self.queue.full():
             self.dropped += 1
             log_event(self.logger, "trace_queue_full", dropped=1, dropped_total=self.dropped)
@@ -326,6 +337,10 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
             await ctx.trace_writer.stop()
 
     app = FastAPI(lifespan=lifespan)
+    app.add_event_handler("startup", ctx.state_writer.start)
+    app.add_event_handler("startup", ctx.trace_writer.start)
+    app.add_event_handler("shutdown", ctx.state_writer.stop)
+    app.add_event_handler("shutdown", ctx.trace_writer.stop)
 
     @app.api_route(f"{config.proxy_base_path}/{{path:path}}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
     async def proxy(path: str, request: Request) -> Response:
@@ -377,7 +392,8 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
                 key_label=key_label,
                 latency_ms=latency_ms,
             )
-            ctx.trace_writer.enqueue(
+            append_trace(
+                ctx.config,
                 {
                     "ts": trace_now_str(ctx.config),
                     "request_id": uuid.uuid4().hex,
@@ -487,7 +503,8 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
             key_label=key_label,
             latency_ms=latency_ms,
         )
-        ctx.trace_writer.enqueue(
+        append_trace(
+            ctx.config,
             {
                 "ts": trace_now_str(ctx.config),
                 "request_id": uuid.uuid4().hex,
@@ -530,4 +547,4 @@ def run_proxy(config: Config, registry: Registry, state: State) -> None:
     if not _is_local_host(host) and not config.proxy_token:
         raise ValueError("Remote proxy binding requires KMI_PROXY_TOKEN for authentication.")
     app = create_app(config, registry, state)
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(app, host=host, port=port, lifespan="on")
