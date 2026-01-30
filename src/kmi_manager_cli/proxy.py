@@ -29,6 +29,7 @@ class ProxyContext:
     registry: Registry
     state: State
     rate_limiter: "RateLimiter"
+    key_rate_limiter: "KeyedRateLimiter"
     state_lock: asyncio.Lock
     state_writer: "StateWriter"
     trace_writer: "TraceWriter"
@@ -119,6 +120,36 @@ class RateLimiter:
     async def allow(self) -> bool:
         if self.max_rps <= 0 and self.max_rpm <= 0:
             return True
+
+
+@dataclass
+class KeyedRateLimiter:
+    max_rps: int
+    max_rpm: int
+    recent: dict[str, Deque[float]] = field(default_factory=dict)
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    async def allow(self, key: str) -> bool:
+        if self.max_rps <= 0 and self.max_rpm <= 0:
+            return True
+        async with self.lock:
+            now = time.time()
+            bucket = self.recent.setdefault(key, deque())
+            while bucket and now - bucket[0] > 60:
+                bucket.popleft()
+            if self.max_rpm > 0 and len(bucket) >= self.max_rpm:
+                return False
+            if self.max_rps > 0:
+                cutoff = now - 1
+                rps = 0
+                for ts in reversed(bucket):
+                    if ts < cutoff:
+                        break
+                    rps += 1
+                if rps >= self.max_rps:
+                    return False
+            bucket.append(now)
+            return True
         async with self.lock:
             now = time.time()
             while self.recent and now - self.recent[0] > 60:
@@ -182,6 +213,7 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
     app = FastAPI()
     limiter = RateLimiter(config.proxy_max_rps, config.proxy_max_rpm)
     logger = get_logger(config)
+    key_limiter = KeyedRateLimiter(config.proxy_max_rps_per_key, config.proxy_max_rpm_per_key)
     state_lock = asyncio.Lock()
     state_writer = StateWriter(config=config, state=state, lock=state_lock)
     trace_writer = TraceWriter(config=config, logger=logger)
@@ -190,6 +222,7 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
         registry=registry,
         state=state,
         rate_limiter=limiter,
+        key_rate_limiter=key_limiter,
         state_lock=state_lock,
         state_writer=state_writer,
         trace_writer=trace_writer,
@@ -221,12 +254,21 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
             log_event(logger, "proxy_rate_limited", endpoint=f"/{path}")
             return JSONResponse({"error": "Proxy rate limit exceeded"}, status_code=429)
         async with ctx.state_lock:
+            prev_active = ctx.state.active_index
+            prev_rotation = ctx.state.rotation_index
             selected = _select_key(ctx)
             if not selected:
                 log_event(logger, "no_keys_available", endpoint=f"/{path}")
                 return JSONResponse({"error": remediation_message()}, status_code=503)
             key_label, api_key = selected
             key_record = ctx.registry.find_by_label(key_label)
+        if not await ctx.key_rate_limiter.allow(key_label):
+            async with ctx.state_lock:
+                ctx.state.active_index = prev_active
+                ctx.state.rotation_index = prev_rotation
+            await ctx.state_writer.mark_dirty()
+            log_event(logger, "proxy_key_rate_limited", endpoint=f"/{path}", key_label=key_label)
+            return JSONResponse({"error": "Per-key rate limit exceeded"}, status_code=429)
         await ctx.state_writer.mark_dirty()
 
         upstream_url = _build_upstream_url(ctx.config, path, request.url.query)

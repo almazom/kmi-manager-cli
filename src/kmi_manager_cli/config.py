@@ -22,6 +22,8 @@ DEFAULT_KMI_PROXY_REQUIRE_TLS = True
 DEFAULT_KMI_PROXY_TLS_TERMINATED = False
 DEFAULT_KMI_PROXY_MAX_RPS = 0
 DEFAULT_KMI_PROXY_MAX_RPM = 0
+DEFAULT_KMI_PROXY_MAX_RPS_PER_KEY = 0
+DEFAULT_KMI_PROXY_MAX_RPM_PER_KEY = 0
 DEFAULT_KMI_PROXY_RETRY_MAX = 0
 DEFAULT_KMI_PROXY_RETRY_BASE_MS = 250
 DEFAULT_KMI_TRACE_MAX_MB = 5
@@ -119,6 +121,8 @@ class Config:
     upstream_allowlist: tuple[str, ...] = ()
     proxy_require_tls: bool = DEFAULT_KMI_PROXY_REQUIRE_TLS
     proxy_tls_terminated: bool = DEFAULT_KMI_PROXY_TLS_TERMINATED
+    proxy_max_rps_per_key: int = DEFAULT_KMI_PROXY_MAX_RPS_PER_KEY
+    proxy_max_rpm_per_key: int = DEFAULT_KMI_PROXY_MAX_RPM_PER_KEY
 
 
 
@@ -162,6 +166,8 @@ def load_config(env_path: Optional[Path] = None) -> Config:
     proxy_tls_terminated = _parse_bool(os.getenv("KMI_PROXY_TLS_TERMINATED"), DEFAULT_KMI_PROXY_TLS_TERMINATED)
     proxy_max_rps = int(os.getenv("KMI_PROXY_MAX_RPS", str(DEFAULT_KMI_PROXY_MAX_RPS)))
     proxy_max_rpm = int(os.getenv("KMI_PROXY_MAX_RPM", str(DEFAULT_KMI_PROXY_MAX_RPM)))
+    proxy_max_rps_per_key = int(os.getenv("KMI_PROXY_MAX_RPS_PER_KEY", str(DEFAULT_KMI_PROXY_MAX_RPS_PER_KEY)))
+    proxy_max_rpm_per_key = int(os.getenv("KMI_PROXY_MAX_RPM_PER_KEY", str(DEFAULT_KMI_PROXY_MAX_RPM_PER_KEY)))
     proxy_retry_max = int(os.getenv("KMI_PROXY_RETRY_MAX", str(DEFAULT_KMI_PROXY_RETRY_MAX)))
     proxy_retry_base_ms = int(os.getenv("KMI_PROXY_RETRY_BASE_MS", str(DEFAULT_KMI_PROXY_RETRY_BASE_MS)))
     trace_max_mb = int(os.getenv("KMI_TRACE_MAX_MB", str(DEFAULT_KMI_TRACE_MAX_MB)))
@@ -185,6 +191,8 @@ def load_config(env_path: Optional[Path] = None) -> Config:
         proxy_token=proxy_token,
         proxy_max_rps=proxy_max_rps,
         proxy_max_rpm=proxy_max_rpm,
+        proxy_max_rps_per_key=proxy_max_rps_per_key,
+        proxy_max_rpm_per_key=proxy_max_rpm_per_key,
         proxy_retry_max=proxy_retry_max,
         proxy_retry_base_ms=proxy_retry_base_ms,
         env_path=env_path,

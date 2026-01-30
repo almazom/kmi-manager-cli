@@ -88,3 +88,34 @@ def test_proxy_upstream_error_returns_502(tmp_path: Path, monkeypatch) -> None:
     resp = client.get("/kmi-rotor/v1/models")
     assert resp.status_code == 502
     assert resp.json()["error"] == "Upstream request failed"
+
+
+def test_proxy_per_key_rate_limit(tmp_path: Path) -> None:
+    config = Config(
+        auths_dir=tmp_path,
+        proxy_listen="127.0.0.1:54123",
+        proxy_base_path="/kmi-rotor/v1",
+        upstream_base_url="https://example.com/api",
+        state_dir=tmp_path,
+        dry_run=True,
+        auto_rotate_allowed=True,
+        rotation_cooldown_seconds=300,
+        proxy_allow_remote=False,
+        proxy_token="",
+        proxy_max_rps=0,
+        proxy_max_rpm=0,
+        proxy_retry_max=0,
+        proxy_retry_base_ms=250,
+        env_path=None,
+        proxy_max_rps_per_key=0,
+        proxy_max_rpm_per_key=1,
+    )
+    registry = Registry(keys=[KeyRecord(label="alpha", api_key="sk-test-a")], active_index=0)
+    state = State()
+    app = create_app(config, registry, state)
+    client = TestClient(app)
+
+    assert client.get("/kmi-rotor/v1/models").status_code == 200
+    second = client.get("/kmi-rotor/v1/models")
+    assert second.status_code == 429
+    assert "rate limit" in second.json()["error"].lower()
