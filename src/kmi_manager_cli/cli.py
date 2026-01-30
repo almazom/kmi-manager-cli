@@ -337,6 +337,7 @@ def rotate_callback(ctx: typer.Context) -> None:
 def rotate_auto() -> None:
     """Enable auto-rotation."""
     config = load_config()
+    _note_mode(config)
     _enable_auto_rotate(config)
 
 
@@ -344,6 +345,7 @@ def rotate_auto() -> None:
 def rotate_off() -> None:
     """Disable auto-rotation."""
     config = load_config()
+    _note_mode(config)
     _disable_auto_rotate(config)
 
 
