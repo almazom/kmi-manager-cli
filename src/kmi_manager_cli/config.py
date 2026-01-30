@@ -18,6 +18,8 @@ DEFAULT_KMI_AUTO_ROTATE_ALLOWED = False
 DEFAULT_KMI_ROTATION_COOLDOWN_SECONDS = 300
 DEFAULT_KMI_PROXY_ALLOW_REMOTE = False
 DEFAULT_KMI_PROXY_TOKEN = ""
+DEFAULT_KMI_PROXY_REQUIRE_TLS = True
+DEFAULT_KMI_PROXY_TLS_TERMINATED = False
 DEFAULT_KMI_PROXY_MAX_RPS = 0
 DEFAULT_KMI_PROXY_MAX_RPM = 0
 DEFAULT_KMI_PROXY_RETRY_MAX = 0
@@ -115,6 +117,8 @@ class Config:
     write_config: bool = DEFAULT_KMI_WRITE_CONFIG
     rotate_on_tie: bool = DEFAULT_KMI_ROTATE_ON_TIE
     upstream_allowlist: tuple[str, ...] = ()
+    proxy_require_tls: bool = DEFAULT_KMI_PROXY_REQUIRE_TLS
+    proxy_tls_terminated: bool = DEFAULT_KMI_PROXY_TLS_TERMINATED
 
 
 
@@ -154,6 +158,8 @@ def load_config(env_path: Optional[Path] = None) -> Config:
     cooldown = int(os.getenv("KMI_ROTATION_COOLDOWN_SECONDS", str(DEFAULT_KMI_ROTATION_COOLDOWN_SECONDS)))
     proxy_allow_remote = _parse_bool(os.getenv("KMI_PROXY_ALLOW_REMOTE"), DEFAULT_KMI_PROXY_ALLOW_REMOTE)
     proxy_token = os.getenv("KMI_PROXY_TOKEN", DEFAULT_KMI_PROXY_TOKEN)
+    proxy_require_tls = _parse_bool(os.getenv("KMI_PROXY_REQUIRE_TLS"), DEFAULT_KMI_PROXY_REQUIRE_TLS)
+    proxy_tls_terminated = _parse_bool(os.getenv("KMI_PROXY_TLS_TERMINATED"), DEFAULT_KMI_PROXY_TLS_TERMINATED)
     proxy_max_rps = int(os.getenv("KMI_PROXY_MAX_RPS", str(DEFAULT_KMI_PROXY_MAX_RPS)))
     proxy_max_rpm = int(os.getenv("KMI_PROXY_MAX_RPM", str(DEFAULT_KMI_PROXY_MAX_RPM)))
     proxy_retry_max = int(os.getenv("KMI_PROXY_RETRY_MAX", str(DEFAULT_KMI_PROXY_RETRY_MAX)))
@@ -188,4 +194,6 @@ def load_config(env_path: Optional[Path] = None) -> Config:
         log_max_backups=max(log_max_backups, 0),
         write_config=write_config,
         rotate_on_tie=rotate_on_tie,
+        proxy_require_tls=proxy_require_tls,
+        proxy_tls_terminated=proxy_tls_terminated,
     )

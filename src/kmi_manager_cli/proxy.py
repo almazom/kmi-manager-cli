@@ -210,7 +210,13 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
         start = time.perf_counter()
         if not _authorize_request(request, ctx.config.proxy_token):
             log_event(logger, "proxy_unauthorized", endpoint=f"/{path}")
-            return JSONResponse({"error": "Unauthorized proxy access"}, status_code=401)
+            return JSONResponse(
+                {
+                    "error": "Unauthorized proxy access",
+                    "hint": "Send Authorization: Bearer <token> or x-kmi-proxy-token header.",
+                },
+                status_code=401,
+            )
         if not await ctx.rate_limiter.allow():
             log_event(logger, "proxy_rate_limited", endpoint=f"/{path}")
             return JSONResponse({"error": "Proxy rate limit exceeded"}, status_code=429)
@@ -364,6 +370,11 @@ def run_proxy(config: Config, registry: Registry, state: State) -> None:
     host, port = parse_listen(config.proxy_listen)
     if not _is_local_host(host) and not config.proxy_allow_remote:
         raise ValueError("Remote proxy binding is disabled. Set KMI_PROXY_ALLOW_REMOTE=1 to override.")
+    if not _is_local_host(host) and config.proxy_require_tls and not config.proxy_tls_terminated:
+        raise ValueError(
+            "Remote proxy binding requires TLS termination. "
+            "Set KMI_PROXY_TLS_TERMINATED=1 when behind TLS, or set KMI_PROXY_REQUIRE_TLS=0 to override."
+        )
     if not _is_local_host(host) and not config.proxy_token:
         raise ValueError("Remote proxy binding requires KMI_PROXY_TOKEN for authentication.")
     app = create_app(config, registry, state)

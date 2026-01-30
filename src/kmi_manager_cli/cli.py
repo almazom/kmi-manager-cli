@@ -46,7 +46,8 @@ APP_HELP = (
     "Notes:\n"
     "  Auto-rotation must comply with provider ToS.\n"
     "  Auto-rotation is opt-in; set KMI_AUTO_ROTATE_ALLOWED=1 to enable.\n"
-    "  Remote proxy binding requires KMI_PROXY_ALLOW_REMOTE=1 and KMI_PROXY_TOKEN."
+    "  Remote proxy binding requires KMI_PROXY_ALLOW_REMOTE=1 and KMI_PROXY_TOKEN.\n"
+    "  For non-local binding, set KMI_PROXY_TLS_TERMINATED=1 (or KMI_PROXY_REQUIRE_TLS=0)."
 )
 
 app = typer.Typer(add_completion=False, help=APP_HELP)
