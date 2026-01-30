@@ -7,6 +7,7 @@ import secrets
 import time
 import uuid
 from collections import deque
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Deque, Iterable, Optional, Tuple
 
@@ -210,7 +211,6 @@ def _authorize_request(request: Request, token: str) -> bool:
 
 
 def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
-    app = FastAPI()
     limiter = RateLimiter(config.proxy_max_rps, config.proxy_max_rpm)
     logger = get_logger(config)
     key_limiter = KeyedRateLimiter(config.proxy_max_rps_per_key, config.proxy_max_rpm_per_key)
@@ -228,15 +228,17 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
         trace_writer=trace_writer,
     )
 
-    @app.on_event("startup")
-    async def _startup() -> None:
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
         await ctx.state_writer.start()
         await ctx.trace_writer.start()
+        try:
+            yield
+        finally:
+            await ctx.state_writer.stop()
+            await ctx.trace_writer.stop()
 
-    @app.on_event("shutdown")
-    async def _shutdown() -> None:
-        await ctx.state_writer.stop()
-        await ctx.trace_writer.stop()
+    app = FastAPI(lifespan=lifespan)
 
     @app.api_route(f"{config.proxy_base_path}/{{path:path}}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
     async def proxy(path: str, request: Request) -> Response:
