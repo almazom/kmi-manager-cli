@@ -9,6 +9,11 @@ from typing import Optional
 
 from dotenv import dotenv_values
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - py<3.11 fallback
+    import tomli as tomllib
+
 
 @dataclass
 class Account:
@@ -21,8 +26,6 @@ class Account:
 
 
 _PROVIDER_ORDER = ["managed:kimi-code", "kimi-for-coding", "moonshot-ai"]
-_SECTION_RE = re.compile(r"^\[(.+)\]$")
-_KV_RE = re.compile(r"^([A-Za-z0-9_\-\.\" ]+)\s*=\s*(.+)$")
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
 
@@ -33,13 +36,6 @@ def _normalize_label(label: str) -> str:
     return value or label
 
 
-def _strip_quotes(value: str) -> str:
-    value = value.strip()
-    if value.startswith('"') and value.endswith('"'):
-        return value[1:-1]
-    return value
-
-
 def _normalize_name(name: str) -> str:
     name = name.strip()
     if name.startswith('"') and name.endswith('"'):
@@ -47,37 +43,27 @@ def _normalize_name(name: str) -> str:
     return name
 
 
-def _parse_toml(path: Path) -> dict[str, dict[str, str]]:
-    section = "__root__"
-    config: dict[str, dict[str, str]] = {"__root__": {}}
-    for line in path.read_text(errors="ignore").splitlines():
-        raw = line.strip()
-        if not raw or raw.startswith("#"):
-            continue
-        m = _SECTION_RE.match(raw)
-        if m:
-            section = m.group(1)
-            config.setdefault(section, {})
-            continue
-        kv = _KV_RE.match(raw)
-        if not kv:
-            continue
-        key = kv.group(1).strip().strip('"')
-        value = _strip_quotes(kv.group(2))
-        if section is None:
-            section = "__root__"
-            config.setdefault(section, {})
-        config[section][key] = value
-    return config
+def _parse_toml(path: Path) -> dict:
+    try:
+        with path.open("rb") as handle:
+            return tomllib.load(handle)
+    except (OSError, ValueError):
+        return {}
 
 
-def _providers_from_config(config: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
+def _providers_from_config(config: dict) -> dict[str, dict[str, str]]:
     providers: dict[str, dict[str, str]] = {}
-    for section, values in config.items():
-        if not section.startswith("providers."):
+    root = config.get("providers") if isinstance(config, dict) else None
+    if isinstance(root, dict):
+        for name, values in root.items():
+            if isinstance(values, dict):
+                providers[str(name)] = {str(k): str(v) for k, v in values.items() if v is not None}
+    for section, values in config.items() if isinstance(config, dict) else []:
+        if not isinstance(section, str) or not section.startswith("providers."):
             continue
         name = _normalize_name(section.split(".", 1)[1])
-        providers[name] = values
+        if isinstance(values, dict):
+            providers[name] = {str(k): str(v) for k, v in values.items() if v is not None}
     return providers
 
 
@@ -102,13 +88,19 @@ def _extract_email_from_values(values: dict[str, str]) -> Optional[str]:
     return None
 
 
-def _extract_email_from_config(config: dict[str, dict[str, str]]) -> Optional[str]:
-    for values in config.values():
-        if not isinstance(values, dict):
+def _extract_email_from_config(config: dict) -> Optional[str]:
+    stack = [config]
+    while stack:
+        current = stack.pop()
+        if not isinstance(current, dict):
             continue
+        values = {k: str(v) for k, v in current.items() if isinstance(v, (str, int, float))}
         email = _extract_email_from_values(values)
         if email:
             return email
+        for value in current.values():
+            if isinstance(value, dict):
+                stack.append(value)
     return None
 
 
@@ -239,15 +231,15 @@ def load_current_account(config_path: Path) -> Optional[Account]:
     if not config_path.exists():
         return None
     config = _parse_toml(config_path)
-    root = config.get("__root__", {})
-    default_model = root.get("default_model") if root else None
+    root = config if isinstance(config, dict) else {}
+    default_model = root.get("default_model") if isinstance(root, dict) else None
 
     provider_name = None
     if default_model:
-        model_section = f"models.{default_model}"
-        model = config.get(model_section)
-        if model and model.get("provider"):
-            provider_name = _normalize_name(model.get("provider", ""))
+        models = root.get("models") if isinstance(root.get("models"), dict) else None
+        model = models.get(default_model) if isinstance(models, dict) else None
+        if isinstance(model, dict) and model.get("provider"):
+            provider_name = _normalize_name(str(model.get("provider", "")))
     if provider_name is None:
         provider_name = _PROVIDER_ORDER[0]
 

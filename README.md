@@ -8,7 +8,7 @@ Spec-driven implementation for KMI Manager CLI. See `docs/sdd/kmi-rotation-sdd/`
 
 ## Quickstart
 
-1. Create an auth file under `_auths/`:
+1. Create an auth file under `_auths/` (supports `.env`, `.toml`, `.json`, or `.json.bak`):
 
 ```bash
 mkdir -p _auths
@@ -37,10 +37,11 @@ Notes:
 - `KMI_DRY_RUN=1` means upstream requests are simulated. Set to `0` for live traffic.
 - Manual `--rotate` copies the selected `_auths/*.toml` into `~/.kimi/config.toml` when `KMI_WRITE_CONFIG=1` and dry-run is off.
 - `KMI_ROTATE_ON_TIE=1` makes manual rotate advance even when all keys are tied for best.
+- `.env` is loaded from the project root (override with `KMI_ENV_PATH`).
 - Remote proxy binding requires `KMI_PROXY_ALLOW_REMOTE=1` and `KMI_PROXY_TOKEN`.
 
 ## Paths
 
 - State and logs: `~/.kmi/` (state.json, logs, trace.jsonl)
 - Current Kimi CLI account: `~/.kimi/config.toml`
-- Auth keys: `_auths/` (or `KMI_AUTHS_DIR`)
+- Auth keys: `_auths/` (or `KMI_AUTHS_DIR`) supporting `.env`, `.toml`, `.json`, `.json.bak`
