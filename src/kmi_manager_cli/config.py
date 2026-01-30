@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from urllib.parse import urlparse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -27,6 +28,7 @@ DEFAULT_KMI_LOG_MAX_MB = 5
 DEFAULT_KMI_LOG_BACKUPS = 3
 DEFAULT_KMI_WRITE_CONFIG = True
 DEFAULT_KMI_ROTATE_ON_TIE = True
+DEFAULT_KMI_UPSTREAM_ALLOWLIST = ""
 
 
 def _parse_bool(value: Optional[str], default: bool) -> bool:
@@ -47,6 +49,46 @@ def _normalize_base_path(value: str) -> str:
     if not value.startswith("/"):
         raise ValueError("KMI_PROXY_BASE_PATH must start with '/'")
     return value.rstrip("/") or "/"
+
+
+def _parse_allowlist(value: Optional[str]) -> tuple[str, ...]:
+    if not value:
+        return ()
+    items = [item.strip().lower() for item in value.split(",") if item.strip()]
+    return tuple(items)
+
+
+def _host_allowed(host: str, allowlist: tuple[str, ...]) -> bool:
+    if not allowlist:
+        return True
+    host = host.lower()
+    for entry in allowlist:
+        if entry.startswith("*.") and host.endswith(entry[1:].lower()):
+            return True
+        if host == entry:
+            return True
+    return False
+
+
+def validate_base_url(name: str, value: str, allowlist: tuple[str, ...]) -> str:
+    value = _require_non_empty(name, value).strip()
+    parsed = urlparse(value)
+    if parsed.scheme.lower() != "https":
+        raise ValueError(f"{name} must use https://")
+    if not parsed.netloc:
+        raise ValueError(f"{name} must include a host")
+    host = parsed.hostname or ""
+    if not _host_allowed(host, allowlist):
+        raise ValueError(f"{name} host '{host}' is not in KMI_UPSTREAM_ALLOWLIST")
+    return value.rstrip("/")
+
+
+def _resolve_env_path() -> Optional[Path]:
+    override = os.getenv("KMI_ENV_PATH")
+    if override:
+        return Path(override).expanduser()
+    candidate = Path(".env")
+    return candidate if candidate.exists() else None
 
 
 @dataclass(frozen=True)
@@ -72,6 +114,7 @@ class Config:
     log_max_backups: int = DEFAULT_KMI_LOG_BACKUPS
     write_config: bool = DEFAULT_KMI_WRITE_CONFIG
     rotate_on_tie: bool = DEFAULT_KMI_ROTATE_ON_TIE
+    upstream_allowlist: tuple[str, ...] = ()
 
 
 
@@ -90,7 +133,7 @@ def _resolve_auths_dir() -> Path:
 
 def load_config(env_path: Optional[Path] = None) -> Config:
     if env_path is None:
-        env_path = Path(".env") if Path(".env").exists() else None
+        env_path = _resolve_env_path()
     if env_path is not None:
         load_dotenv(env_path)
     else:
@@ -99,9 +142,12 @@ def load_config(env_path: Optional[Path] = None) -> Config:
     auths_dir = _resolve_auths_dir()
     proxy_listen = _require_non_empty("KMI_PROXY_LISTEN", os.getenv("KMI_PROXY_LISTEN", DEFAULT_KMI_PROXY_LISTEN))
     proxy_base_path = _normalize_base_path(os.getenv("KMI_PROXY_BASE_PATH", DEFAULT_KMI_PROXY_BASE_PATH))
-    upstream_base_url = _require_non_empty(
-        "KMI_UPSTREAM_BASE_URL", os.getenv("KMI_UPSTREAM_BASE_URL", DEFAULT_KMI_UPSTREAM_BASE_URL)
-    ).rstrip("/")
+    upstream_allowlist = _parse_allowlist(os.getenv("KMI_UPSTREAM_ALLOWLIST", DEFAULT_KMI_UPSTREAM_ALLOWLIST))
+    upstream_base_url = validate_base_url(
+        "KMI_UPSTREAM_BASE_URL",
+        os.getenv("KMI_UPSTREAM_BASE_URL", DEFAULT_KMI_UPSTREAM_BASE_URL),
+        upstream_allowlist,
+    )
     state_dir = Path(os.getenv("KMI_STATE_DIR", DEFAULT_KMI_STATE_DIR)).expanduser()
     dry_run = _parse_bool(os.getenv("KMI_DRY_RUN"), DEFAULT_KMI_DRY_RUN)
     auto_rotate_allowed = _parse_bool(os.getenv("KMI_AUTO_ROTATE_ALLOWED"), DEFAULT_KMI_AUTO_ROTATE_ALLOWED)
@@ -124,6 +170,7 @@ def load_config(env_path: Optional[Path] = None) -> Config:
         proxy_listen=proxy_listen,
         proxy_base_path=proxy_base_path,
         upstream_base_url=upstream_base_url,
+        upstream_allowlist=upstream_allowlist,
         state_dir=state_dir,
         dry_run=dry_run,
         auto_rotate_allowed=auto_rotate_allowed,

@@ -41,7 +41,7 @@ APP_HELP = (
     f"  KMI_DRY_RUN={DEFAULT_KMI_DRY_RUN}\n"
     f"  KMI_WRITE_CONFIG={DEFAULT_KMI_WRITE_CONFIG}\n"
     f"  KMI_ROTATE_ON_TIE={DEFAULT_KMI_ROTATE_ON_TIE}\n"
-    "Config file: .env (if present in working directory)\n"
+    "Config file: .env in current project (override with KMI_ENV_PATH)\n"
     "Notes:\n"
     "  Auto-rotation must comply with provider ToS.\n"
     "  Remote proxy binding requires KMI_PROXY_ALLOW_REMOTE=1 and KMI_PROXY_TOKEN."
@@ -62,7 +62,7 @@ def _note_dry_run(config) -> None:
 
 
 def _load_registry_or_exit(config):
-    registry = load_auths_dir(config.auths_dir, config.upstream_base_url)
+    registry = load_auths_dir(config.auths_dir, config.upstream_base_url, config.upstream_allowlist)
     if not registry.keys:
         typer.echo(no_keys_message(config))
         raise typer.Exit(code=1)
@@ -73,6 +73,8 @@ def _manual_rotate(config) -> None:
     _note_dry_run(config)
     registry = _load_registry_or_exit(config)
     state = load_state(config, registry)
+    idx = max(0, min(state.active_index, len(registry.keys) - 1))
+    previous_label = registry.keys[idx].label if registry.keys else "none"
     health = get_health_map(config, registry, state)
     try:
         active, rotated, reason = rotate_manual(registry, state, health=health, prefer_next_on_tie=config.rotate_on_tie)
@@ -81,14 +83,27 @@ def _manual_rotate(config) -> None:
         raise typer.Exit(code=1)
     save_state(config, state)
     if rotated and config.write_config and not config.dry_run:
-        accounts = load_accounts_from_auths_dir(config.auths_dir, config.upstream_base_url)
+        accounts = load_accounts_from_auths_dir(
+            config.auths_dir,
+            config.upstream_base_url,
+            config.upstream_allowlist,
+        )
         account_map = {account.label: account for account in accounts}
         selected = account_map.get(active.label)
         if selected and copy_account_config(selected.source, _current_config_path()):
             typer.echo(f"Updated ~/.kimi/config.toml from {Path(selected.source).name}")
         else:
             typer.echo("Warning: rotate config requires a .toml auth file; rotation state updated only.")
-    render_rotation_dashboard(active.label, registry, state, health=health, rotated=rotated, reason=reason, dry_run=config.dry_run)
+    render_rotation_dashboard(
+        active.label,
+        registry,
+        state,
+        health=health,
+        rotated=rotated,
+        reason=reason,
+        dry_run=config.dry_run,
+        previous_label=previous_label,
+    )
 
 
 def _enable_auto_rotate(config) -> None:
@@ -109,14 +124,18 @@ def _current_config_path() -> Path:
 
 def _render_accounts_health(config) -> None:
     _note_dry_run(config)
-    registry = load_auths_dir(config.auths_dir, config.upstream_base_url)
+    registry = load_auths_dir(config.auths_dir, config.upstream_base_url, config.upstream_allowlist)
     state = load_state(config, registry)
     if registry.keys:
         idx = max(0, min(state.active_index, len(registry.keys) - 1))
         active_label = registry.keys[idx].label if registry.keys else "none"
         typer.echo(f"Active key: {active_label}")
-    accounts = load_accounts_from_auths_dir(config.auths_dir, config.upstream_base_url)
-    current = load_current_account(_current_config_path())
+    accounts = load_accounts_from_auths_dir(
+        config.auths_dir,
+        config.upstream_base_url,
+        config.upstream_allowlist,
+    )
+    current = load_current_account(_current_config_path(), config.upstream_allowlist)
     if current:
         accounts = [current] + accounts
     if not accounts:
@@ -128,18 +147,22 @@ def _render_accounts_health(config) -> None:
 
 def _render_current_health(config) -> None:
     _note_dry_run(config)
-    registry = load_auths_dir(config.auths_dir, config.upstream_base_url)
+    registry = load_auths_dir(config.auths_dir, config.upstream_base_url, config.upstream_allowlist)
     state = load_state(config, registry)
     if registry.keys:
         idx = max(0, min(state.active_index, len(registry.keys) - 1))
         active_label = registry.keys[idx].label if registry.keys else "none"
         typer.echo(f"Active key: {active_label}")
-    current = load_current_account(_current_config_path())
+    current = load_current_account(_current_config_path(), config.upstream_allowlist)
     if not current:
         typer.echo("No current account found at ~/.kimi/config.toml")
         raise typer.Exit(code=1)
     # Try to map current to a known auth label without extra API calls.
-    accounts = load_accounts_from_auths_dir(config.auths_dir, config.upstream_base_url)
+    accounts = load_accounts_from_auths_dir(
+        config.auths_dir,
+        config.upstream_base_url,
+        config.upstream_allowlist,
+    )
     for account in accounts:
         if account.base_url == current.base_url and account.api_key == current.api_key:
             current = Account(
