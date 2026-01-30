@@ -12,6 +12,7 @@ from kmi_manager_cli.config import (
     DEFAULT_KMI_DRY_RUN,
     DEFAULT_KMI_WRITE_CONFIG,
     DEFAULT_KMI_ROTATE_ON_TIE,
+    Config,
     load_config,
 )
 from pathlib import Path
@@ -76,6 +77,15 @@ def _note_mode(config) -> None:
         typer.echo("MODE: DRY-RUN (upstream requests are simulated).")
     else:
         typer.echo("MODE: LIVE (upstream requests enabled).")
+
+
+def _load_config_or_exit() -> Config:
+    try:
+        return load_config()
+    except ValueError as exc:
+        typer.echo(f"Config error: {exc}")
+        typer.echo("Hint: check .env or KMI_* environment variables.")
+        raise typer.Exit(code=2)
 
 
 def _load_registry_or_exit(config):
@@ -194,7 +204,7 @@ def _render_accounts_health(config) -> None:
     if not accounts:
         typer.echo(no_keys_message(config))
         raise typer.Exit(code=1)
-    health = get_accounts_health(config, accounts, state, force_real=True)
+    health = get_accounts_health(config, accounts, state, force_real=False)
     render_accounts_health_dashboard(accounts, state, health, dry_run=config.dry_run, time_zone=config.time_zone)
 
 
@@ -232,7 +242,7 @@ def _render_current_health(config) -> None:
                 email=current.email,
             )
             break
-    health = get_accounts_health(config, [current], state, force_real=True)
+    health = get_accounts_health(config, [current], state, force_real=False)
     render_accounts_health_dashboard([current], state, health, dry_run=config.dry_run, time_zone=config.time_zone)
 
 
@@ -273,7 +283,7 @@ def main_callback(
         typer.echo(ctx.get_help())
         raise typer.Exit()
 
-    config = load_config()  # ensure env is loaded early
+    config = _load_config_or_exit()  # ensure env is loaded early
     if rotate:
         _manual_rotate(config)
         raise typer.Exit()
@@ -305,11 +315,14 @@ def main() -> None:
 @app.command()
 def proxy() -> None:
     """Start the local proxy server."""
-    config = load_config()
+    config = _load_config_or_exit()
     _note_mode(config)
     registry = _load_registry_or_exit(config)
     state = load_state(config, registry)
-    typer.echo(f"Starting proxy at http://{config.proxy_listen}{config.proxy_base_path}")
+    scheme = "https" if config.proxy_tls_terminated else "http"
+    typer.echo(f"Starting proxy at {scheme}://{config.proxy_listen}{config.proxy_base_path}")
+    if config.proxy_require_tls and not config.proxy_tls_terminated:
+        typer.echo("Note: TLS termination required for remote access (set KMI_PROXY_TLS_TERMINATED=1).")
     try:
         run_proxy(config, registry, state)
     except ValueError as exc:
@@ -320,7 +333,7 @@ def proxy() -> None:
 @app.command()
 def trace() -> None:
     """Show live trace view."""
-    config = load_config()
+    config = _load_config_or_exit()
     _note_mode(config)
     run_trace_tui(config)
 
@@ -329,14 +342,14 @@ def trace() -> None:
 def rotate_callback(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand:
         return
-    config = load_config()
+    config = _load_config_or_exit()
     _manual_rotate(config)
 
 
 @rotate_app.command("auto")
 def rotate_auto() -> None:
     """Enable auto-rotation."""
-    config = load_config()
+    config = _load_config_or_exit()
     _note_mode(config)
     _enable_auto_rotate(config)
 
@@ -344,7 +357,7 @@ def rotate_auto() -> None:
 @rotate_app.command("off")
 def rotate_off() -> None:
     """Disable auto-rotation."""
-    config = load_config()
+    config = _load_config_or_exit()
     _note_mode(config)
     _disable_auto_rotate(config)
 
@@ -352,7 +365,7 @@ def rotate_off() -> None:
 @app.command()
 def health() -> None:
     """Show health of all keys."""
-    config = load_config()
+    config = _load_config_or_exit()
     _render_accounts_health(config)
 
 
@@ -362,5 +375,5 @@ app.add_typer(rotate_app, name="rotate")
 @app.command()
 def status() -> None:
     """Show current rotation status."""
-    config = load_config()
+    config = _load_config_or_exit()
     _render_status(config)

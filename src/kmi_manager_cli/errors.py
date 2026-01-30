@@ -7,8 +7,8 @@ def no_keys_message(config: Config) -> str:
     return (
         "No API keys found in _auths/.\n"
         f"Expected directory: {config.auths_dir}\n"
-        "Add one or more auth files (*.env, *.toml, *.json) with KMI_API_KEY\n"
-        "or configure ~/.kimi/config.toml, then try again."
+        "Add one or more auth files (*.env, *.toml, *.json) with KMI_API_KEY for rotation/proxy.\n"
+        "Note: ~/.kimi/config.toml is used only for the current account health view."
     )
 
 
