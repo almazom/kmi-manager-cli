@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -22,11 +23,25 @@ def file_lock(path: Path) -> Iterator[None]:
     with lock_path.open("a+") as handle:
         if fcntl:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        else:
+            fd = None
+            while fd is None:
+                try:
+                    fd = os.open(str(lock_path) + ".win", os.O_CREAT | os.O_EXCL | os.O_RDWR)
+                except FileExistsError:
+                    time.sleep(0.05)
         try:
             yield
         finally:
             if fcntl:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            else:
+                if fd is not None:
+                    os.close(fd)
+                    try:
+                        os.unlink(str(lock_path) + ".win")
+                    except FileNotFoundError:
+                        pass
 
 
 def atomic_write_text(path: Path, content: str) -> None:

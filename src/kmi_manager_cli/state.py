@@ -56,6 +56,21 @@ class State:
         )
 
 
+def _migrate_state(data: dict) -> tuple[dict, bool]:
+    changed = False
+    try:
+        version = int(data.get("schema_version", 0))
+    except (TypeError, ValueError):
+        version = 0
+    if version < 1:
+        data["schema_version"] = STATE_SCHEMA_VERSION
+        changed = True
+    if version > STATE_SCHEMA_VERSION:
+        data["schema_version"] = STATE_SCHEMA_VERSION
+        changed = True
+    return data, changed
+
+
 def _state_path(config: Config) -> Path:
     return config.state_dir.expanduser() / "state.json"
 
@@ -73,7 +88,13 @@ def load_state(config: Config, registry: Registry) -> State:
         with file_lock(path):
             try:
                 data = json.loads(path.read_text())
+                data, migrated = _migrate_state(data)
                 state = State.from_dict(data)
+                if state.schema_version != STATE_SCHEMA_VERSION:
+                    state.schema_version = STATE_SCHEMA_VERSION
+                    migrated = True
+                if migrated:
+                    changed = True
             except json.JSONDecodeError:
                 corrupt = path.with_suffix(path.suffix + f".corrupt.{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}")
                 path.rename(corrupt)
@@ -132,3 +153,10 @@ def record_request(state: State, label: str, status_code: int) -> None:
         key_state.error_429 += 1
     elif 500 <= status_code <= 599:
         key_state.error_5xx += 1
+    elif status_code < 400:
+        if key_state.error_403 > 0:
+            key_state.error_403 -= 1
+        if key_state.error_429 > 0:
+            key_state.error_429 -= 1
+        if key_state.error_5xx > 0:
+            key_state.error_5xx -= 1

@@ -225,6 +225,16 @@ def _account_from_json(path: Path, default_base_url: str, allowlist: tuple[str, 
     )
 
 
+def collect_auth_files(auths_dir: Path) -> list[Path]:
+    candidates: list[Path] = []
+    for path in sorted(auths_dir.iterdir()):
+        if path.is_dir():
+            candidates.extend(sorted([p for p in path.iterdir() if p.is_file()]))
+        elif path.is_file():
+            candidates.append(path)
+    return candidates
+
+
 def load_accounts_from_auths_dir(
     auths_dir: Path, default_base_url: str, allowlist: tuple[str, ...] = ()
 ) -> list[Account]:
@@ -232,13 +242,7 @@ def load_accounts_from_auths_dir(
     if not auths_dir.exists():
         return []
     accounts: list[Account] = []
-    candidates: list[Path] = []
-    for path in sorted(auths_dir.iterdir()):
-        if path.is_dir():
-            candidates.extend(sorted([p for p in path.iterdir() if p.is_file()]))
-        elif path.is_file():
-            candidates.append(path)
-    for path in candidates:
+    for path in collect_auth_files(auths_dir):
         if path.suffix.lower() == ".env":
             account = _account_from_env(path, default_base_url, allowlist)
         elif path.suffix.lower() == ".toml":
