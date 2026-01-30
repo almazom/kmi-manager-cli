@@ -46,15 +46,22 @@ def test_rotate_manual_raises_when_no_eligible_keys() -> None:
 
 def test_proxy_marks_exhausted_on_429(tmp_path: Path, monkeypatch) -> None:
     class RateLimitedClient:
-        async def __aenter__(self):
-            return self
+        def __init__(self, *args, **kwargs) -> None:
+            pass
 
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
+        class _Stream:
+            async def __aenter__(self):
+                request = httpx.Request("GET", "https://example.com")
+                return httpx.Response(429, request=request, content=b"{}")
 
-        async def request(self, *args, **kwargs):
-            request = httpx.Request("GET", "https://example.com")
-            return httpx.Response(429, request=request, content=b"{}")
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        def stream(self, *args, **kwargs):
+            return self._Stream()
+
+        async def aclose(self) -> None:
+            return None
 
     monkeypatch.setattr("kmi_manager_cli.proxy.httpx.AsyncClient", lambda *args, **kwargs: RateLimitedClient())
 

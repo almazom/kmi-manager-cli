@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import logging
 import json
 import secrets
@@ -9,19 +11,99 @@ import uuid
 from collections import deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Deque, Iterable, Optional, Tuple
+from typing import Deque, Iterable, Optional, Tuple, TYPE_CHECKING
 
 import httpx
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.background import BackgroundTask
 
 from kmi_manager_cli.config import Config
 from kmi_manager_cli.errors import remediation_message
 from kmi_manager_cli.keys import Registry
 from kmi_manager_cli.logging import get_logger, log_event
+from kmi_manager_cli.health import get_health_map
 from kmi_manager_cli.rotation import mark_exhausted, select_key_for_request
 from kmi_manager_cli.state import State, record_request, save_state
 from kmi_manager_cli.trace import append_trace, trace_now_str
+
+if TYPE_CHECKING:
+    from kmi_manager_cli.health import HealthInfo
+
+
+_HOP_BY_HOP_HEADERS = {
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+    "transfer-encoding",
+    "upgrade",
+}
+
+
+def _filter_hop_by_hop_headers(headers: Iterable[tuple[str, str]]) -> dict[str, str]:
+    connection_tokens: set[str] = set()
+    for key, value in headers:
+        if key.lower() == "connection":
+            for token in value.split(","):
+                token = token.strip().lower()
+                if token:
+                    connection_tokens.add(token)
+    hop_by_hop = _HOP_BY_HOP_HEADERS | connection_tokens
+    filtered: dict[str, str] = {}
+    for key, value in headers:
+        if key.lower() in hop_by_hop:
+            continue
+        filtered[key] = value
+    return filtered
+
+
+def _build_upstream_headers(request_headers: Iterable[tuple[str, str]], api_key: str) -> dict[str, str]:
+    headers = _filter_hop_by_hop_headers(request_headers)
+    headers.pop("host", None)
+    headers.pop("content-length", None)
+    headers.pop("authorization", None)
+    headers.pop("x-kmi-proxy-token", None)
+    headers["authorization"] = f"Bearer {api_key}"
+    return headers
+
+
+def _parse_retry_after(value: Optional[str]) -> Optional[int]:
+    if not value:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        seconds = int(value)
+        return max(0, seconds)
+    except ValueError:
+        try:
+            dt = parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        delta = int((dt - datetime.now(timezone.utc)).total_seconds())
+        return max(0, delta)
+
+
+async def _close_stream(stream_ctx, client: httpx.AsyncClient) -> None:
+    if stream_ctx is not None:
+        await stream_ctx.__aexit__(None, None, None)
+    await client.aclose()
+
+
+def _get_cached_health(ctx: ProxyContext, ttl_seconds: int = 60) -> dict[str, "HealthInfo"]:
+    now = time.time()
+    if ctx.health_cache and (now - ctx.health_cache_ts) < ttl_seconds:
+        return ctx.health_cache
+    health = get_health_map(ctx.config, ctx.registry, ctx.state)
+    ctx.health_cache = health
+    ctx.health_cache_ts = now
+    return health
 
 
 @dataclass
@@ -34,6 +116,8 @@ class ProxyContext:
     state_lock: asyncio.Lock
     state_writer: "StateWriter"
     trace_writer: "TraceWriter"
+    health_cache: dict[str, "HealthInfo"] = field(default_factory=dict)
+    health_cache_ts: float = 0.0
 
 
 @dataclass
@@ -79,6 +163,7 @@ class TraceWriter:
     config: Config
     logger: "logging.Logger"
     queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=1000))
+    dropped: int = 0
     _stop: asyncio.Event = field(default_factory=asyncio.Event)
     _task: Optional[asyncio.Task] = None
 
@@ -88,7 +173,8 @@ class TraceWriter:
 
     def enqueue(self, entry: dict) -> None:
         if self.queue.full():
-            log_event(self.logger, "trace_queue_full", dropped=1)
+            self.dropped += 1
+            log_event(self.logger, "trace_queue_full", dropped=1, dropped_total=self.dropped)
             return
         self.queue.put_nowait(entry)
 
@@ -121,6 +207,23 @@ class RateLimiter:
     async def allow(self) -> bool:
         if self.max_rps <= 0 and self.max_rpm <= 0:
             return True
+        async with self.lock:
+            now = time.time()
+            while self.recent and now - self.recent[0] > 60:
+                self.recent.popleft()
+            if self.max_rpm > 0 and len(self.recent) >= self.max_rpm:
+                return False
+            if self.max_rps > 0:
+                cutoff = now - 1
+                rps = 0
+                for ts in reversed(self.recent):
+                    if ts < cutoff:
+                        break
+                    rps += 1
+                if rps >= self.max_rps:
+                    return False
+            self.recent.append(now)
+            return True
 
 
 @dataclass
@@ -151,23 +254,6 @@ class KeyedRateLimiter:
                     return False
             bucket.append(now)
             return True
-        async with self.lock:
-            now = time.time()
-            while self.recent and now - self.recent[0] > 60:
-                self.recent.popleft()
-            if self.max_rpm > 0 and len(self.recent) >= self.max_rpm:
-                return False
-            if self.max_rps > 0:
-                cutoff = now - 1
-                rps = 0
-                for ts in reversed(self.recent):
-                    if ts < cutoff:
-                        break
-                    rps += 1
-                if rps >= self.max_rps:
-                    return False
-            self.recent.append(now)
-            return True
 
 
 def parse_listen(listen: str) -> Tuple[str, int]:
@@ -188,7 +274,8 @@ def _build_upstream_url(config: Config, path: str, query: str) -> str:
 
 def _select_key(ctx: ProxyContext) -> Optional[tuple[str, str]]:
     auto_rotate = ctx.state.auto_rotate and ctx.config.auto_rotate_allowed
-    key = select_key_for_request(ctx.registry, ctx.state, auto_rotate)
+    health = _get_cached_health(ctx) if auto_rotate else None
+    key = select_key_for_request(ctx.registry, ctx.state, auto_rotate, health=health)
     if not key:
         return None
     return key.label, key.api_key
@@ -274,12 +361,7 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
         await ctx.state_writer.mark_dirty()
 
         upstream_url = _build_upstream_url(ctx.config, path, request.url.query)
-        headers = dict(request.headers)
-        headers.pop("host", None)
-        headers.pop("content-length", None)
-        headers.pop("authorization", None)
-        headers.pop("x-kmi-proxy-token", None)
-        headers["authorization"] = f"Bearer {api_key}"
+        headers = _build_upstream_headers(request.headers.items(), api_key)
         body = await request.body()
 
         if ctx.config.dry_run:
@@ -319,33 +401,41 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
                 status_code=200,
             )
 
+        stream_ctx = None
+        client = httpx.AsyncClient(timeout=30.0)
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                attempt = 0
-                while True:
-                    try:
-                        resp = await client.request(
-                            request.method,
-                            upstream_url,
-                            headers=headers,
-                            content=body,
-                        )
-                    except httpx.HTTPError as exc:
-                        if attempt < ctx.config.proxy_retry_max:
-                            delay = (ctx.config.proxy_retry_base_ms * (2 ** attempt)) / 1000.0
-                            await asyncio.sleep(delay)
-                            attempt += 1
-                            continue
-                        raise exc
+            attempt = 0
+            while True:
+                try:
+                    stream_ctx = client.stream(
+                        request.method,
+                        upstream_url,
+                        headers=headers,
+                        content=body,
+                    )
+                    resp = await stream_ctx.__aenter__()
+                except httpx.HTTPError as exc:
+                    if attempt < ctx.config.proxy_retry_max:
+                        delay = (ctx.config.proxy_retry_base_ms * (2 ** attempt)) / 1000.0
+                        await asyncio.sleep(delay)
+                        attempt += 1
+                        continue
+                    raise exc
 
-                    if resp.status_code in {429} or 500 <= resp.status_code <= 599:
-                        if attempt < ctx.config.proxy_retry_max:
-                            delay = (ctx.config.proxy_retry_base_ms * (2 ** attempt)) / 1000.0
-                            await asyncio.sleep(delay)
-                            attempt += 1
-                            continue
-                    break
+                if resp.status_code in {429} or 500 <= resp.status_code <= 599:
+                    if attempt < ctx.config.proxy_retry_max:
+                        await resp.aread()
+                        await stream_ctx.__aexit__(None, None, None)
+                        stream_ctx = None
+                        delay = (ctx.config.proxy_retry_base_ms * (2 ** attempt)) / 1000.0
+                        await asyncio.sleep(delay)
+                        attempt += 1
+                        continue
+                break
         except httpx.HTTPError as exc:
+            if stream_ctx is not None:
+                await stream_ctx.__aexit__(None, None, None)
+            await client.aclose()
             async with ctx.state_lock:
                 record_request(ctx.state, key_label, 503)
             await ctx.state_writer.mark_dirty()
@@ -378,8 +468,15 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
             )
         async with ctx.state_lock:
             record_request(ctx.state, key_label, resp.status_code)
-            if resp.status_code in {403, 429}:
-                mark_exhausted(ctx.state, key_label, ctx.config.rotation_cooldown_seconds)
+            if resp.status_code in {403, 429} or 500 <= resp.status_code <= 599:
+                cooldown = ctx.config.rotation_cooldown_seconds
+                if resp.status_code == 429:
+                    retry_after = _parse_retry_after(resp.headers.get("retry-after"))
+                    if retry_after is not None:
+                        cooldown = max(1, retry_after)
+                elif 500 <= resp.status_code <= 599:
+                    cooldown = min(ctx.config.rotation_cooldown_seconds, 60)
+                mark_exhausted(ctx.state, key_label, cooldown)
         await ctx.state_writer.mark_dirty()
         latency_ms = int((time.perf_counter() - start) * 1000)
         log_event(
@@ -403,7 +500,18 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
                 "rotation_index": ctx.state.rotation_index,
             },
         )
-        return Response(content=resp.content, status_code=resp.status_code, headers=dict(resp.headers))
+        response_headers = _filter_hop_by_hop_headers(resp.headers.items())
+        if resp.is_stream_consumed:
+            content = resp.content
+            await _close_stream(stream_ctx, client)
+            return Response(content=content, status_code=resp.status_code, headers=response_headers)
+        background = BackgroundTask(_close_stream, stream_ctx, client)
+        return StreamingResponse(
+            resp.aiter_raw(),
+            status_code=resp.status_code,
+            headers=response_headers,
+            background=background,
+        )
 
     return app
 

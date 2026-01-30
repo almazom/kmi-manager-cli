@@ -192,6 +192,15 @@ def select_key_round_robin(registry: Registry, state: State, health: Optional[di
         return None
     total = len(registry.keys)
     start = state.rotation_index % total
+    if health:
+        for offset in range(total):
+            idx = (start + offset) % total
+            candidate = registry.keys[idx]
+            info = health.get(candidate.label)
+            if info and info.status == "healthy" and _is_eligible(candidate, state, health):
+                state.rotation_index = (idx + 1) % total
+                mark_last_used(state, candidate.label)
+                return candidate
     for offset in range(total):
         idx = (start + offset) % total
         candidate = registry.keys[idx]
