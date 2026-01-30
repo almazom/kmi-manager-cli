@@ -20,7 +20,7 @@
 ## 2. Scope
 
 ### 2.1 In-Scope
-- CLI wrapper `kmi` with flags: `--rotate`, `--auto_rotate`, `--trace`, `--all` (health summary).
+- CLI wrapper `kmi` with flags: `--rotate`, `--auto_rotate`, `--trace`, `--all`, `--health`, `--current`, `--status`.
 - Local proxy with unique base path and port.
 - Key registry from `_auths/` + `.env`.
 - Health/usage collection per key (quota + errors).
@@ -41,10 +41,15 @@
 ### 3.2 Rotation
 - `kmi --rotate` or `kmi rotate`: select the **most resourceful** eligible key (highest remaining quota, lowest error rate) and show dashboard. If the current key already ranks best, the rotation is skipped with a reason.
 - `kmi --auto_rotate` or `kmi rotate auto`: enable round-robin per request.
+- `kmi rotate off`: disable auto-rotation.
 
 ### 3.3 Observability
 - `kmi --trace` or `kmi trace`: real-time trace view; exits on Ctrl+C.
-- `kmi --all` or `kmi health`: show health of all keys without rotating.
+- `kmi --all`, `kmi --health`, or `kmi health`: show health of all keys without rotating.
+- `kmi --current`: show health for the current account only.
+
+### 3.4 Status
+- `kmi --status` or `kmi status`: show active index, rotation index, and auto-rotate flag.
 
 ---
 
