@@ -28,19 +28,19 @@ def _build_table(entries: list[dict], window: int) -> Table:
     table = Table(title=title, caption=f"keys: {distribution}" + (f" | {warning}" if warning else ""))
     table.add_column("ts")
     table.add_column("req_id")
+    table.add_column("req")
     table.add_column("key")
     table.add_column("endpoint")
     table.add_column("status")
-    table.add_column("latency_ms")
 
     for entry in entries[-20:]:
         table.add_row(
             str(entry.get("ts", entry.get("ts_msk", ""))),
             str(entry.get("request_id", ""))[:8],
+            str(entry.get("method", ""))[:1].upper(),
             str(entry.get("key_label", "")),
             str(entry.get("endpoint", "")),
             str(entry.get("status", "")),
-            str(entry.get("latency_ms", "")),
         )
     return table
 

@@ -397,6 +397,7 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
                 {
                     "ts": trace_now_str(ctx.config),
                     "request_id": uuid.uuid4().hex,
+                    "method": request.method,
                     "key_label": key_label,
                     "key_hash": key_record.key_hash if key_record else "",
                     "endpoint": f"/{path}",
@@ -465,10 +466,12 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
                 latency_ms=latency_ms,
                 error=str(exc),
             )
-            ctx.trace_writer.enqueue(
+            append_trace(
+                ctx.config,
                 {
                     "ts": trace_now_str(ctx.config),
                     "request_id": uuid.uuid4().hex,
+                    "method": request.method,
                     "key_label": key_label,
                     "key_hash": key_record.key_hash if key_record else "",
                     "endpoint": f"/{path}",
@@ -508,6 +511,7 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
             {
                 "ts": trace_now_str(ctx.config),
                 "request_id": uuid.uuid4().hex,
+                "method": request.method,
                 "key_label": key_label,
                 "key_hash": key_record.key_hash if key_record else "",
                 "endpoint": f"/{path}",
