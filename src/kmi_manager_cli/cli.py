@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 import socket
 import subprocess
 import time
 import typer
+import httpx
 
 from kmi_manager_cli import __version__
 from kmi_manager_cli.config import (
@@ -34,7 +36,7 @@ from kmi_manager_cli.logging import get_logger
 from kmi_manager_cli.proxy import parse_listen, run_proxy
 from kmi_manager_cli.rotation import rotate_manual
 from kmi_manager_cli.state import load_state, save_state
-from kmi_manager_cli.trace import compute_confidence, load_trace_entries, trace_path
+from kmi_manager_cli.trace import compute_confidence, compute_distribution, trace_path
 from kmi_manager_cli.trace_tui import run_trace_tui
 from kmi_manager_cli.ui import render_accounts_health_dashboard, render_health_dashboard, render_registry_table, render_rotation_dashboard
 
@@ -342,6 +344,36 @@ def _proxy_listening(host: str, port: int) -> bool:
         return False
 
 
+def _normalize_connect_host(host: str) -> str:
+    if host in {"0.0.0.0", "::"}:
+        return "127.0.0.1"
+    return host
+
+
+def _read_new_trace_entries(path: Path, offset: int) -> tuple[list[dict], int]:
+    if not path.exists():
+        return [], offset
+    with path.open("rb") as handle:
+        handle.seek(offset)
+        data = handle.read()
+    if not data:
+        return [], offset
+    new_offset = offset + len(data)
+    entries: list[dict] = []
+    for line in data.splitlines():
+        try:
+            entries.append(json.loads(line.decode("utf-8", errors="ignore")))
+        except json.JSONDecodeError:
+            continue
+    return entries, new_offset
+
+
+def _format_counts(counts: dict[str, int]) -> str:
+    if not counts:
+        return "-"
+    return ", ".join(f"{label}:{count}" for label, count in sorted(counts.items()))
+
+
 @app.command()
 def e2e(
     requests: int = typer.Option(50, "--requests", "-n", help="Total requests to send."),
@@ -349,30 +381,45 @@ def e2e(
     window: int = typer.Option(50, "--window", help="Window size for confidence."),
     endpoint: str = typer.Option("/models", "--endpoint", help="Endpoint path to hit via proxy."),
     min_confidence: float = typer.Option(95.0, "--min-confidence", help="Target confidence threshold."),
+    timeout: float = typer.Option(10.0, "--timeout", help="Per-request timeout (seconds)."),
+    pause: float = typer.Option(0.5, "--pause", help="Pause between batches (seconds)."),
+    scheme: str = typer.Option("http", "--scheme", help="Proxy scheme (http or https)."),
 ) -> None:
     """Run a round-robin proxy E2E check."""
+    if requests <= 0 or batch <= 0 or window <= 0:
+        raise typer.BadParameter("--requests, --batch, and --window must be positive")
+    scheme = scheme.lower()
+    if scheme not in {"http", "https"}:
+        raise typer.BadParameter("--scheme must be 'http' or 'https'")
     config = _load_config_or_exit()
+    _note_mode(config)
     if not config.auto_rotate_allowed:
         typer.echo("Auto-rotation is disabled by policy (KMI_AUTO_ROTATE_ALLOWED=false).")
         raise typer.Exit(code=1)
+    registry = _load_registry_or_exit(config)
     _enable_auto_rotate(config)
 
     host, port = parse_listen(config.proxy_listen)
+    connect_host = _normalize_connect_host(host)
     started_proc = None
-    if not _proxy_listening(host, port):
+    if not _proxy_listening(connect_host, port):
         typer.echo("Proxy is not running; starting it now...")
-        started_proc = subprocess.Popen(["kmi", "proxy"])
-        for _ in range(10):
+        try:
+            started_proc = subprocess.Popen(["kmi", "proxy"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except FileNotFoundError:
+            typer.echo("Unable to start proxy via 'kmi proxy'. Ensure 'kmi' is in PATH.")
+            raise typer.Exit(code=1)
+        for _ in range(20):
             time.sleep(0.5)
-            if _proxy_listening(host, port):
+            if _proxy_listening(connect_host, port):
                 break
-    if not _proxy_listening(host, port):
+    if not _proxy_listening(connect_host, port):
         typer.echo("Proxy did not start or is not reachable.")
         if started_proc:
             started_proc.terminate()
         raise typer.Exit(code=1)
 
-    base = f"http://{host}:{port}{config.proxy_base_path.rstrip('/')}"
+    base = f"{scheme}://{connect_host}:{port}{config.proxy_base_path.rstrip('/')}"
     path = endpoint if endpoint.startswith("/") else f"/{endpoint}"
     url = f"{base}{path}"
 
@@ -382,27 +429,51 @@ def e2e(
 
     trace_file = trace_path(config)
     trace_file.parent.mkdir(parents=True, exist_ok=True)
-    initial_entries = len(load_trace_entries(trace_file, window=10000))
+    offset = trace_file.stat().st_size if trace_file.exists() else 0
 
     total_sent = 0
+    errors = 0
     confidence = 0.0
-    while total_sent < requests:
-        current_batch = min(batch, requests - total_sent)
-        for _ in range(current_batch):
-            subprocess.run(["curl", "-s", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        total_sent += current_batch
-        time.sleep(0.5)
-        entries = load_trace_entries(trace_file, window=max(window, 1))
-        models = [e for e in entries if e.get("endpoint") == path]
-        added = len(models) - max(0, initial_entries - max(len(models) - len(entries), 0))
-        confidence = compute_confidence(models[-window:]) if models else 0.0
-        typer.echo(f"sent={total_sent}/{requests} entries={len(models)} confidence={confidence}")
-        if confidence >= min_confidence and len(models) >= min(window, requests):
-            break
+    collected: list[dict] = []
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            while total_sent < requests:
+                current_batch = min(batch, requests - total_sent)
+                for _ in range(current_batch):
+                    try:
+                        resp = client.request("GET", url, headers=headers)
+                        if resp.status_code >= 400:
+                            errors += 1
+                    except httpx.HTTPError:
+                        errors += 1
+                    total_sent += 1
+                if pause > 0:
+                    time.sleep(pause)
+                new_entries, offset = _read_new_trace_entries(trace_file, offset)
+                for entry in new_entries:
+                    if entry.get("endpoint") == path:
+                        collected.append(entry)
+                sample = collected[-window:] if collected else []
+                confidence = compute_confidence(sample) if sample else 0.0
+                counts, _ = compute_distribution(sample)
+                keys_seen = len(counts)
+                typer.echo(
+                    f"sent={total_sent}/{requests} trace={len(collected)} keys={keys_seen}/{len(registry.keys)} "
+                    f"confidence={confidence}% errors={errors}"
+                )
+                if confidence >= min_confidence and len(sample) >= min(window, requests):
+                    break
+    finally:
+        if started_proc:
+            started_proc.terminate()
+            try:
+                started_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                started_proc.kill()
 
-    if started_proc:
-        started_proc.terminate()
-
+    sample = collected[-window:] if collected else []
+    counts, total = compute_distribution(sample)
+    typer.echo(f"Distribution (last {total}): {_format_counts(counts)}")
     if confidence >= min_confidence:
         typer.echo(f"E2E OK: confidence={confidence}%")
     else:
