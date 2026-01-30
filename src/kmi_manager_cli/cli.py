@@ -24,6 +24,7 @@ from kmi_manager_cli.auth_accounts import (
 from kmi_manager_cli.errors import no_keys_message, remediation_message
 from kmi_manager_cli.health import get_accounts_health, get_health_map
 from kmi_manager_cli.keys import Registry, load_auths_dir
+from kmi_manager_cli.logging import get_logger, log_event
 from kmi_manager_cli.proxy import run_proxy
 from kmi_manager_cli.rotation import rotate_manual
 from kmi_manager_cli.state import load_state, save_state
@@ -44,6 +45,7 @@ APP_HELP = (
     "Config file: .env in current project (override with KMI_ENV_PATH)\n"
     "Notes:\n"
     "  Auto-rotation must comply with provider ToS.\n"
+    "  Auto-rotation is opt-in; set KMI_AUTO_ROTATE_ALLOWED=1 to enable.\n"
     "  Remote proxy binding requires KMI_PROXY_ALLOW_REMOTE=1 and KMI_PROXY_TOKEN."
 )
 
@@ -114,8 +116,21 @@ def _enable_auto_rotate(config) -> None:
     state = load_state(config, registry)
     state.auto_rotate = True
     save_state(config, state)
+    log_event(get_logger(config), "auto_rotate_enabled")
     typer.echo("Auto-rotation enabled (round-robin).")
     typer.echo("Reminder: ensure your provider allows key pooling/rotation per ToS.")
+
+
+def _disable_auto_rotate(config) -> None:
+    registry = load_auths_dir(config.auths_dir, config.upstream_base_url, config.upstream_allowlist)
+    state = load_state(config, registry)
+    if not state.auto_rotate:
+        typer.echo("Auto-rotation is already disabled.")
+        return
+    state.auto_rotate = False
+    save_state(config, state)
+    log_event(get_logger(config), "auto_rotate_disabled")
+    typer.echo("Auto-rotation disabled.")
 
 
 def _current_config_path() -> Path:
@@ -275,6 +290,13 @@ def rotate_auto() -> None:
     """Enable auto-rotation."""
     config = load_config()
     _enable_auto_rotate(config)
+
+
+@rotate_app.command("off")
+def rotate_off() -> None:
+    """Disable auto-rotation."""
+    config = load_config()
+    _disable_auto_rotate(config)
 
 
 @app.command()

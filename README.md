@@ -39,6 +39,7 @@ Notes:
 - `KMI_ROTATE_ON_TIE=1` makes manual rotate advance even when all keys are tied for best.
 - `.env` is loaded from the project root (override with `KMI_ENV_PATH`).
 - `KMI_UPSTREAM_ALLOWLIST` can restrict upstream hosts (comma-separated, supports `*.domain`).
+- Auto-rotation is opt-in; set `KMI_AUTO_ROTATE_ALLOWED=1` before enabling.
 - Remote proxy binding requires `KMI_PROXY_ALLOW_REMOTE=1` and `KMI_PROXY_TOKEN`.
 
 ## Paths
