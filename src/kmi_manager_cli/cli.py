@@ -16,6 +16,7 @@ from kmi_manager_cli.config import (
 )
 from pathlib import Path
 
+from kmi_manager_cli.audit import log_audit_event
 from kmi_manager_cli.auth_accounts import (
     Account,
     copy_account_config,
@@ -25,7 +26,7 @@ from kmi_manager_cli.auth_accounts import (
 from kmi_manager_cli.errors import no_keys_message, remediation_message
 from kmi_manager_cli.health import get_accounts_health, get_health_map
 from kmi_manager_cli.keys import Registry, load_auths_dir
-from kmi_manager_cli.logging import get_logger, log_event
+from kmi_manager_cli.logging import get_logger
 from kmi_manager_cli.proxy import run_proxy
 from kmi_manager_cli.rotation import rotate_manual
 from kmi_manager_cli.state import load_state, save_state
@@ -78,7 +79,13 @@ def _note_mode(config) -> None:
 
 
 def _load_registry_or_exit(config):
-    registry = load_auths_dir(config.auths_dir, config.upstream_base_url, config.upstream_allowlist)
+    logger = get_logger(config)
+    registry = load_auths_dir(
+        config.auths_dir,
+        config.upstream_base_url,
+        config.upstream_allowlist,
+        logger=logger,
+    )
     if not registry.keys:
         typer.echo(no_keys_message(config))
         raise typer.Exit(code=1)
@@ -108,6 +115,12 @@ def _manual_rotate(config) -> None:
         selected = account_map.get(active.label)
         if selected and copy_account_config(selected.source, _current_config_path()):
             typer.echo(f"Updated ~/.kimi/config.toml from {Path(selected.source).name}")
+            log_audit_event(
+                get_logger(config),
+                "config_written",
+                source=selected.source,
+                dest=str(_current_config_path()),
+            )
         else:
             typer.echo("Warning: rotate config requires a .toml auth file; rotation state updated only.")
     render_rotation_dashboard(
@@ -131,20 +144,25 @@ def _enable_auto_rotate(config) -> None:
     state = load_state(config, registry)
     state.auto_rotate = True
     save_state(config, state)
-    log_event(get_logger(config), "auto_rotate_enabled")
+    log_audit_event(get_logger(config), "auto_rotate_enabled")
     typer.echo("Auto-rotation enabled (round-robin).")
     typer.echo("Reminder: ensure your provider allows key pooling/rotation per ToS.")
 
 
 def _disable_auto_rotate(config) -> None:
-    registry = load_auths_dir(config.auths_dir, config.upstream_base_url, config.upstream_allowlist)
+    registry = load_auths_dir(
+        config.auths_dir,
+        config.upstream_base_url,
+        config.upstream_allowlist,
+        logger=get_logger(config),
+    )
     state = load_state(config, registry)
     if not state.auto_rotate:
         typer.echo("Auto-rotation is already disabled.")
         return
     state.auto_rotate = False
     save_state(config, state)
-    log_event(get_logger(config), "auto_rotate_disabled")
+    log_audit_event(get_logger(config), "auto_rotate_disabled")
     typer.echo("Auto-rotation disabled.")
 
 
@@ -154,7 +172,12 @@ def _current_config_path() -> Path:
 
 def _render_accounts_health(config) -> None:
     _note_mode(config)
-    registry = load_auths_dir(config.auths_dir, config.upstream_base_url, config.upstream_allowlist)
+    registry = load_auths_dir(
+        config.auths_dir,
+        config.upstream_base_url,
+        config.upstream_allowlist,
+        logger=get_logger(config),
+    )
     state = load_state(config, registry)
     if registry.keys:
         idx = max(0, min(state.active_index, len(registry.keys) - 1))
@@ -177,7 +200,12 @@ def _render_accounts_health(config) -> None:
 
 def _render_current_health(config) -> None:
     _note_mode(config)
-    registry = load_auths_dir(config.auths_dir, config.upstream_base_url, config.upstream_allowlist)
+    registry = load_auths_dir(
+        config.auths_dir,
+        config.upstream_base_url,
+        config.upstream_allowlist,
+        logger=get_logger(config),
+    )
     state = load_state(config, registry)
     if registry.keys:
         idx = max(0, min(state.active_index, len(registry.keys) - 1))

@@ -9,6 +9,8 @@ from typing import Optional
 from kmi_manager_cli.config import Config
 from kmi_manager_cli.keys import Registry
 from kmi_manager_cli.locking import atomic_write_text, file_lock
+from kmi_manager_cli.logging import get_logger
+from kmi_manager_cli.security import warn_if_insecure
 
 STATE_SCHEMA_VERSION = 1
 
@@ -61,6 +63,10 @@ def _state_path(config: Config) -> Path:
 def load_state(config: Config, registry: Registry) -> State:
     config.state_dir.expanduser().mkdir(parents=True, exist_ok=True)
     path = _state_path(config)
+    logger = get_logger(config)
+    warn_if_insecure(config.state_dir.expanduser(), logger, "state_dir")
+    if path.exists():
+        warn_if_insecure(path, logger, "state_file")
 
     changed = False
     if path.exists():

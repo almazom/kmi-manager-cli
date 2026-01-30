@@ -9,10 +9,13 @@ from typing import Iterable
 
 from kmi_manager_cli.config import Config
 from kmi_manager_cli.locking import file_lock
+from kmi_manager_cli.logging import get_logger
+from kmi_manager_cli.security import warn_if_insecure
 from kmi_manager_cli.time_utils import format_timestamp, resolve_timezone
 
 
 TRACE_SCHEMA_VERSION = 1
+_CHECKED_PATHS: set[Path] = set()
 
 
 def trace_now_str(config: Config) -> str:
@@ -50,6 +53,12 @@ def _rotate_trace_if_needed(path: Path, max_bytes: int, max_backups: int) -> Non
 def append_trace(config: Config, entry: dict) -> None:
     entry.setdefault("schema_version", TRACE_SCHEMA_VERSION)
     path = trace_path(config)
+    if path not in _CHECKED_PATHS:
+        logger = get_logger(config)
+        warn_if_insecure(path.parent, logger, "trace_dir")
+        if path.exists():
+            warn_if_insecure(path, logger, "trace_file")
+        _CHECKED_PATHS.add(path)
     with file_lock(path):
         _rotate_trace_if_needed(path, config.trace_max_bytes, config.trace_max_backups)
         with path.open("a", encoding="utf-8") as handle:

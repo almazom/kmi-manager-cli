@@ -1,6 +1,7 @@
 # KMI Manager CLI
 
-Spec-driven implementation for KMI Manager CLI. See `docs/sdd/kmi-rotation-sdd/` for requirements.
+Spec-driven implementation for KMI Manager CLI. Canonical docs live under `docs/` (legacy `Docs/` may exist).
+See `docs/sdd/kmi-rotation-sdd/` for requirements.
 
 ## Requirements
 
@@ -45,6 +46,8 @@ Notes:
 - Optional per-key limits: `KMI_PROXY_MAX_RPS_PER_KEY` and `KMI_PROXY_MAX_RPM_PER_KEY`.
 - `KMI_TIMEZONE` controls timestamps (default `local`; accepts `UTC`, `+03:00`, or IANA names).
 - `KMI_LOCALE` controls human-facing summaries (default `en`, set `ru` for Russian).
+- `--plain` / `--no-color` (or `KMI_PLAIN=1` / `KMI_NO_COLOR=1`) disable rich formatting.
+- `KMI_AUDIT_ACTOR` tags audit events (auto-rotate enable/disable, config writes).
 
 ## Paths
 

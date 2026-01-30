@@ -9,6 +9,7 @@ from dotenv import dotenv_values
 
 from kmi_manager_cli.auth_accounts import load_accounts_from_auths_dir
 from kmi_manager_cli.config import DEFAULT_KMI_UPSTREAM_BASE_URL
+from kmi_manager_cli.security import warn_if_insecure
 
 
 def _parse_bool(value: Optional[str]) -> bool:
@@ -77,6 +78,7 @@ def load_auths_dir(
     auths_dir: Path,
     default_base_url: str = DEFAULT_KMI_UPSTREAM_BASE_URL,
     allowlist: tuple[str, ...] = (),
+    logger=None,
 ) -> Registry:
     auths_dir = auths_dir.expanduser()
     if not auths_dir.exists():
@@ -85,6 +87,8 @@ def load_auths_dir(
 
     env_meta: dict[str, tuple[int, bool]] = {}
     for path in _collect_auth_files(auths_dir):
+        if logger is not None:
+            warn_if_insecure(path, logger, "auth_file")
         if path.suffix.lower() != ".env":
             continue
         data = load_env_file(path)
