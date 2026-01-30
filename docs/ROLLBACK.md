@@ -3,6 +3,7 @@
 This project uses tagged savepoints during automated changes.
 
 ## Available Savepoints
+- aop-savepoint-9 (after trace reliability fix)
 - aop-savepoint-8 (after Phase 4 docs + CI updates)
 - aop-savepoint-7 (after Phase 4 core fixes)
 - aop-savepoint-6 (previous run)
