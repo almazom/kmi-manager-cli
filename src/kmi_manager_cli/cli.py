@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+import socket
+import subprocess
+import time
 import typer
 
 from kmi_manager_cli import __version__
@@ -28,9 +31,10 @@ from kmi_manager_cli.errors import no_keys_message, remediation_message
 from kmi_manager_cli.health import get_accounts_health, get_health_map
 from kmi_manager_cli.keys import Registry, load_auths_dir
 from kmi_manager_cli.logging import get_logger
-from kmi_manager_cli.proxy import run_proxy
+from kmi_manager_cli.proxy import parse_listen, run_proxy
 from kmi_manager_cli.rotation import rotate_manual
 from kmi_manager_cli.state import load_state, save_state
+from kmi_manager_cli.trace import compute_confidence, load_trace_entries, trace_path
 from kmi_manager_cli.trace_tui import run_trace_tui
 from kmi_manager_cli.ui import render_accounts_health_dashboard, render_health_dashboard, render_registry_table, render_rotation_dashboard
 
@@ -328,6 +332,81 @@ def proxy() -> None:
     except ValueError as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1)
+
+
+def _proxy_listening(host: str, port: int) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+@app.command()
+def e2e(
+    requests: int = typer.Option(50, "--requests", "-n", help="Total requests to send."),
+    batch: int = typer.Option(10, "--batch", help="Requests per batch."),
+    window: int = typer.Option(50, "--window", help="Window size for confidence."),
+    endpoint: str = typer.Option("/models", "--endpoint", help="Endpoint path to hit via proxy."),
+    min_confidence: float = typer.Option(95.0, "--min-confidence", help="Target confidence threshold."),
+) -> None:
+    """Run a round-robin proxy E2E check."""
+    config = _load_config_or_exit()
+    if not config.auto_rotate_allowed:
+        typer.echo("Auto-rotation is disabled by policy (KMI_AUTO_ROTATE_ALLOWED=false).")
+        raise typer.Exit(code=1)
+    _enable_auto_rotate(config)
+
+    host, port = parse_listen(config.proxy_listen)
+    started_proc = None
+    if not _proxy_listening(host, port):
+        typer.echo("Proxy is not running; starting it now...")
+        started_proc = subprocess.Popen(["kmi", "proxy"])
+        for _ in range(10):
+            time.sleep(0.5)
+            if _proxy_listening(host, port):
+                break
+    if not _proxy_listening(host, port):
+        typer.echo("Proxy did not start or is not reachable.")
+        if started_proc:
+            started_proc.terminate()
+        raise typer.Exit(code=1)
+
+    base = f"http://{host}:{port}{config.proxy_base_path.rstrip('/')}"
+    path = endpoint if endpoint.startswith("/") else f"/{endpoint}"
+    url = f"{base}{path}"
+
+    headers = {}
+    if config.proxy_token:
+        headers["Authorization"] = f"Bearer {config.proxy_token}"
+
+    trace_file = trace_path(config)
+    trace_file.parent.mkdir(parents=True, exist_ok=True)
+    initial_entries = len(load_trace_entries(trace_file, window=10000))
+
+    total_sent = 0
+    confidence = 0.0
+    while total_sent < requests:
+        current_batch = min(batch, requests - total_sent)
+        for _ in range(current_batch):
+            subprocess.run(["curl", "-s", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        total_sent += current_batch
+        time.sleep(0.5)
+        entries = load_trace_entries(trace_file, window=max(window, 1))
+        models = [e for e in entries if e.get("endpoint") == path]
+        added = len(models) - max(0, initial_entries - max(len(models) - len(entries), 0))
+        confidence = compute_confidence(models[-window:]) if models else 0.0
+        typer.echo(f"sent={total_sent}/{requests} entries={len(models)} confidence={confidence}")
+        if confidence >= min_confidence and len(models) >= min(window, requests):
+            break
+
+    if started_proc:
+        started_proc.terminate()
+
+    if confidence >= min_confidence:
+        typer.echo(f"E2E OK: confidence={confidence}%")
+    else:
+        typer.echo(f"E2E WARN: confidence={confidence}% < {min_confidence}%")
 
 
 @app.command()
