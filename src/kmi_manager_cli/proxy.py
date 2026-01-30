@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import json
 import secrets
 import time
@@ -28,6 +29,84 @@ class ProxyContext:
     registry: Registry
     state: State
     rate_limiter: "RateLimiter"
+    state_lock: asyncio.Lock
+    state_writer: "StateWriter"
+    trace_writer: "TraceWriter"
+
+
+@dataclass
+class StateWriter:
+    config: Config
+    state: State
+    lock: asyncio.Lock
+    debounce_seconds: float = 0.05
+    _dirty: bool = False
+    _flush: asyncio.Event = field(default_factory=asyncio.Event)
+    _stop: asyncio.Event = field(default_factory=asyncio.Event)
+    _task: Optional[asyncio.Task] = None
+
+    async def start(self) -> None:
+        if self._task is None:
+            self._task = asyncio.create_task(self._run())
+
+    async def mark_dirty(self) -> None:
+        self._dirty = True
+        self._flush.set()
+
+    async def stop(self) -> None:
+        self._stop.set()
+        self._flush.set()
+        if self._task:
+            await self._task
+
+    async def _run(self) -> None:
+        while True:
+            await self._flush.wait()
+            self._flush.clear()
+            await asyncio.sleep(self.debounce_seconds)
+            if self._dirty:
+                async with self.lock:
+                    save_state(self.config, self.state)
+                self._dirty = False
+            if self._stop.is_set():
+                break
+
+
+@dataclass
+class TraceWriter:
+    config: Config
+    logger: "logging.Logger"
+    queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=1000))
+    _stop: asyncio.Event = field(default_factory=asyncio.Event)
+    _task: Optional[asyncio.Task] = None
+
+    async def start(self) -> None:
+        if self._task is None:
+            self._task = asyncio.create_task(self._run())
+
+    def enqueue(self, entry: dict) -> None:
+        if self.queue.full():
+            log_event(self.logger, "trace_queue_full", dropped=1)
+            return
+        self.queue.put_nowait(entry)
+
+    async def stop(self) -> None:
+        self._stop.set()
+        if self._task:
+            await self._task
+
+    async def _run(self) -> None:
+        while True:
+            try:
+                entry = await asyncio.wait_for(self.queue.get(), timeout=0.2)
+            except asyncio.TimeoutError:
+                if self._stop.is_set() and self.queue.empty():
+                    break
+                continue
+            try:
+                append_trace(self.config, entry)
+            except Exception as exc:  # pragma: no cover - defensive
+                log_event(self.logger, "trace_write_failed", error=str(exc))
 
 
 @dataclass
@@ -102,8 +181,29 @@ def _authorize_request(request: Request, token: str) -> bool:
 def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
     app = FastAPI()
     limiter = RateLimiter(config.proxy_max_rps, config.proxy_max_rpm)
-    ctx = ProxyContext(config=config, registry=registry, state=state, rate_limiter=limiter)
     logger = get_logger(config)
+    state_lock = asyncio.Lock()
+    state_writer = StateWriter(config=config, state=state, lock=state_lock)
+    trace_writer = TraceWriter(config=config, logger=logger)
+    ctx = ProxyContext(
+        config=config,
+        registry=registry,
+        state=state,
+        rate_limiter=limiter,
+        state_lock=state_lock,
+        state_writer=state_writer,
+        trace_writer=trace_writer,
+    )
+
+    @app.on_event("startup")
+    async def _startup() -> None:
+        await ctx.state_writer.start()
+        await ctx.trace_writer.start()
+
+    @app.on_event("shutdown")
+    async def _shutdown() -> None:
+        await ctx.state_writer.stop()
+        await ctx.trace_writer.stop()
 
     @app.api_route(f"{config.proxy_base_path}/{{path:path}}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
     async def proxy(path: str, request: Request) -> Response:
@@ -114,13 +214,14 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
         if not await ctx.rate_limiter.allow():
             log_event(logger, "proxy_rate_limited", endpoint=f"/{path}")
             return JSONResponse({"error": "Proxy rate limit exceeded"}, status_code=429)
-        selected = _select_key(ctx)
-        if not selected:
-            log_event(logger, "no_keys_available", endpoint=f"/{path}")
-            return JSONResponse({"error": remediation_message()}, status_code=503)
-        key_label, api_key = selected
-        key_record = ctx.registry.find_by_label(key_label)
-        save_state(ctx.config, ctx.state)
+        async with ctx.state_lock:
+            selected = _select_key(ctx)
+            if not selected:
+                log_event(logger, "no_keys_available", endpoint=f"/{path}")
+                return JSONResponse({"error": remediation_message()}, status_code=503)
+            key_label, api_key = selected
+            key_record = ctx.registry.find_by_label(key_label)
+        await ctx.state_writer.mark_dirty()
 
         upstream_url = _build_upstream_url(ctx.config, path, request.url.query)
         headers = dict(request.headers)
@@ -132,8 +233,9 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
         body = await request.body()
 
         if ctx.config.dry_run:
-            record_request(ctx.state, key_label, 200)
-            save_state(ctx.config, ctx.state)
+            async with ctx.state_lock:
+                record_request(ctx.state, key_label, 200)
+            await ctx.state_writer.mark_dirty()
             latency_ms = int((time.perf_counter() - start) * 1000)
             log_event(
                 logger,
@@ -143,8 +245,7 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
                 key_label=key_label,
                 latency_ms=latency_ms,
             )
-            append_trace(
-                ctx.config,
+            ctx.trace_writer.enqueue(
                 {
                     "ts_msk": msk_now_str(),
                     "request_id": uuid.uuid4().hex,
@@ -195,8 +296,9 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
                             continue
                     break
         except httpx.HTTPError as exc:
-            record_request(ctx.state, key_label, 503)
-            save_state(ctx.config, ctx.state)
+            async with ctx.state_lock:
+                record_request(ctx.state, key_label, 503)
+            await ctx.state_writer.mark_dirty()
             latency_ms = int((time.perf_counter() - start) * 1000)
             log_event(
                 logger,
@@ -207,8 +309,7 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
                 latency_ms=latency_ms,
                 error=str(exc),
             )
-            append_trace(
-                ctx.config,
+            ctx.trace_writer.enqueue(
                 {
                     "ts_msk": msk_now_str(),
                     "request_id": uuid.uuid4().hex,
@@ -225,10 +326,11 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
                 {"error": "Upstream request failed", "hint": "Check connectivity or upstream status."},
                 status_code=502,
             )
-        record_request(ctx.state, key_label, resp.status_code)
-        if resp.status_code in {403, 429}:
-            mark_exhausted(ctx.state, key_label, ctx.config.rotation_cooldown_seconds)
-        save_state(ctx.config, ctx.state)
+        async with ctx.state_lock:
+            record_request(ctx.state, key_label, resp.status_code)
+            if resp.status_code in {403, 429}:
+                mark_exhausted(ctx.state, key_label, ctx.config.rotation_cooldown_seconds)
+        await ctx.state_writer.mark_dirty()
         latency_ms = int((time.perf_counter() - start) * 1000)
         log_event(
             logger,
@@ -238,8 +340,7 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
             key_label=key_label,
             latency_ms=latency_ms,
         )
-        append_trace(
-            ctx.config,
+        ctx.trace_writer.enqueue(
             {
                 "ts_msk": msk_now_str(),
                 "request_id": uuid.uuid4().hex,
