@@ -20,7 +20,7 @@
 Each line is a JSON object with the following fields:
 
 - schema_version: int
-- ts_msk: timestamp string (display timezone)
+- ts: timestamp string (timezone from KMI_TIMEZONE)
 - request_id: hex string
 - key_label: string
 - key_hash: short hash

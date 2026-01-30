@@ -3,20 +3,21 @@ from __future__ import annotations
 import json
 import os
 from collections import deque
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
 from kmi_manager_cli.config import Config
 from kmi_manager_cli.locking import file_lock
+from kmi_manager_cli.time_utils import format_timestamp, resolve_timezone
 
 
-MSK_OFFSET = timedelta(hours=3)
 TRACE_SCHEMA_VERSION = 1
 
 
-def msk_now_str() -> str:
-    return (datetime.now(timezone.utc) + MSK_OFFSET).strftime("%Y-%m-%d %H:%M:%S MSK")
+def trace_now_str(config: Config) -> str:
+    tzinfo = resolve_timezone(config.time_zone)
+    return format_timestamp(datetime.now(timezone.utc), tzinfo)
 
 
 def trace_path(config: Config) -> Path:

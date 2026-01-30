@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import os
 from typing import Optional
 
@@ -13,9 +13,27 @@ from kmi_manager_cli.auth_accounts import Account
 from kmi_manager_cli.health import HealthInfo, LimitInfo
 from kmi_manager_cli.keys import Registry, mask_key
 from kmi_manager_cli.state import State
+from kmi_manager_cli.time_utils import format_timestamp, parse_iso_timestamp, resolve_timezone
 
 
-console = Console()
+def _plain_output() -> bool:
+    return os.getenv("KMI_PLAIN") == "1" or os.getenv("KMI_NO_COLOR") == "1" or os.getenv("NO_COLOR") is not None
+
+
+def get_console(console: Optional[Console] = None) -> Console:
+    if console is not None:
+        return console
+    return Console(no_color=_plain_output())
+
+
+def _format_last_used(last_used: Optional[str], time_zone: Optional[str]) -> str:
+    if not last_used:
+        return "-"
+    parsed = parse_iso_timestamp(str(last_used))
+    if not parsed:
+        return str(last_used)
+    tzinfo = resolve_timezone(time_zone)
+    return format_timestamp(parsed, tzinfo)
 
 
 def render_registry_table(
@@ -23,7 +41,10 @@ def render_registry_table(
     state: Optional[State] = None,
     title: str = "KMI Keys",
     health: Optional[dict[str, HealthInfo]] = None,
+    console: Optional[Console] = None,
+    time_zone: Optional[str] = None,
 ) -> None:
+    console = get_console(console)
     table = Table(title=title)
     table.add_column("Label", style="bold")
     table.add_column("Status")
@@ -35,7 +56,7 @@ def render_registry_table(
         status = health.get(key.label).status if health and key.label in health else None
         if not status:
             status = "disabled" if key.disabled else "unknown"
-        last_used = key_state.last_used if key_state and key_state.last_used else "-"
+        last_used = _format_last_used(key_state.last_used if key_state else None, time_zone)
         table.add_row(key.label, status, last_used, mask_key(key.api_key))
 
     console.print(table)
@@ -49,7 +70,14 @@ def render_rotation_dashboard(
     rotated: bool = True,
     reason: Optional[str] = None,
     dry_run: bool = False,
+    previous_label: Optional[str] = None,
+    console: Optional[Console] = None,
+    time_zone: Optional[str] = None,
 ) -> None:
+    console = get_console(console)
+    if previous_label:
+        summary = _rotation_summary(previous_label, active_label, rotated, reason)
+        console.print(summary)
     if rotated:
         console.print("Rotation complete")
     else:
@@ -59,7 +87,44 @@ def render_rotation_dashboard(
     if reason:
         console.print(f"Reason: {reason}")
     console.print(f"Active key: {active_label}")
-    render_registry_table(registry, state, title="Key Dashboard", health=health)
+    render_registry_table(registry, state, title="Key Dashboard", health=health, console=console, time_zone=time_zone)
+
+
+def _rotation_summary(
+    previous_label: str,
+    active_label: str,
+    rotated: bool,
+    reason: Optional[str],
+) -> str:
+    reason_text = _summarize_rotate_reason(reason, rotated)
+    if _is_ru_locale():
+        return f"Было {previous_label} -> стало {active_label}, причина: {reason_text}."
+    return f"Was {previous_label} -> now {active_label}. Reason: {reason_text}."
+
+
+def _is_ru_locale() -> bool:
+    return os.getenv("KMI_LOCALE", "en").lower().startswith("ru")
+
+
+def _summarize_rotate_reason(reason: Optional[str], rotated: bool) -> str:
+    ru = _is_ru_locale()
+    if reason:
+        lowered = reason.lower()
+        if "tie for best score" in lowered:
+            return "все ключи равны, поэтому перешли к следующему" if ru else "all keys tied, rotated to next"
+        if "ties for best" in lowered:
+            return "текущий ключ равен лучшему, поэтому оставили его" if ru else "current key tied for best, kept current"
+        if "higher remaining quota" in lowered:
+            return "у текущего ключа больше квоты" if ru else "current key has higher remaining quota"
+        if "lower error rate" in lowered:
+            return "у текущего ключа меньше ошибок" if ru else "current key has lower error rate"
+        if "better status" in lowered:
+            return "у текущего ключа лучше статус" if ru else "current key has better status"
+        if "already ranks best" in lowered:
+            return "текущий ключ уже лучший" if ru else "current key already ranks best"
+    if rotated:
+        return "выбран самый ресурсный ключ" if ru else "selected most resourceful key"
+    return "текущий ключ уже лучший" if ru else "current key already best"
 
 
 def _status_meta(status: str) -> tuple[str, str, str, int]:
@@ -155,11 +220,15 @@ def _reset_seconds(hint: Optional[str]) -> Optional[int]:
         return None
 
 
-def _msk_now() -> str:
-    return (datetime.now(timezone.utc) + timedelta(hours=3)).strftime("%Y-%m-%d %H:%M")
-
-
-def render_health_dashboard(registry: Registry, state: State, health: dict[str, HealthInfo], dry_run: bool = False) -> None:
+def render_health_dashboard(
+    registry: Registry,
+    state: State,
+    health: dict[str, HealthInfo],
+    dry_run: bool = False,
+    console: Optional[Console] = None,
+    time_zone: Optional[str] = None,
+) -> None:
+    console = get_console(console)
     ok = warn = red = unknown = 0
     best_label = None
     best_remaining = -1.0
@@ -200,7 +269,7 @@ def render_health_dashboard(registry: Registry, state: State, health: dict[str, 
                 "limit": info.limit if info else None,
                 "reset": info.reset_hint if info else None,
                 "error_rate": info.error_rate if info else 0.0,
-                "last_used": state.keys.get(label).last_used if label in state.keys else None,
+                "last_used": _format_last_used(state.keys.get(label).last_used if label in state.keys else None, time_zone),
             }
         )
 
@@ -311,8 +380,14 @@ def _limit_title(limit: LimitInfo) -> str:
 
 
 def render_accounts_health_dashboard(
-    accounts: list[Account], state: State, health: dict[str, HealthInfo], dry_run: bool = False
+    accounts: list[Account],
+    state: State,
+    health: dict[str, HealthInfo],
+    dry_run: bool = False,
+    console: Optional[Console] = None,
+    time_zone: Optional[str] = None,
 ) -> None:
+    console = get_console(console)
     ok = warn = red = unknown = 0
     show_source = os.getenv("KMI_SHOW_SOURCE") == "1"
     if dry_run:
@@ -415,7 +490,10 @@ def render_accounts_health_dashboard(
                 "remaining_abs": info.remaining if info else None,
                 "reset": info.reset_hint if info else None,
                 "error_rate": info.error_rate if info else 0.0,
-                "last_used": state.keys.get(account.label).last_used if account.label in state.keys else None,
+                "last_used": _format_last_used(
+                    state.keys.get(account.label).last_used if account.label in state.keys else None,
+                    time_zone,
+                ),
                 "source": account.source,
                 "limits": info.limits if info else [],
                 "alias_of": alias_of,

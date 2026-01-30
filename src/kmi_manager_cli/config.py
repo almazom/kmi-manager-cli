@@ -33,6 +33,7 @@ DEFAULT_KMI_LOG_BACKUPS = 3
 DEFAULT_KMI_WRITE_CONFIG = True
 DEFAULT_KMI_ROTATE_ON_TIE = True
 DEFAULT_KMI_UPSTREAM_ALLOWLIST = ""
+DEFAULT_KMI_TIMEZONE = "local"
 
 
 def _parse_bool(value: Optional[str], default: bool) -> bool:
@@ -123,6 +124,7 @@ class Config:
     proxy_tls_terminated: bool = DEFAULT_KMI_PROXY_TLS_TERMINATED
     proxy_max_rps_per_key: int = DEFAULT_KMI_PROXY_MAX_RPS_PER_KEY
     proxy_max_rpm_per_key: int = DEFAULT_KMI_PROXY_MAX_RPM_PER_KEY
+    time_zone: str = DEFAULT_KMI_TIMEZONE
 
 
 
@@ -176,6 +178,7 @@ def load_config(env_path: Optional[Path] = None) -> Config:
     log_max_backups = int(os.getenv("KMI_LOG_BACKUPS", str(DEFAULT_KMI_LOG_BACKUPS)))
     write_config = _parse_bool(os.getenv("KMI_WRITE_CONFIG"), DEFAULT_KMI_WRITE_CONFIG)
     rotate_on_tie = _parse_bool(os.getenv("KMI_ROTATE_ON_TIE"), DEFAULT_KMI_ROTATE_ON_TIE)
+    time_zone = os.getenv("KMI_TIMEZONE", DEFAULT_KMI_TIMEZONE)
 
     return Config(
         auths_dir=auths_dir,
@@ -204,4 +207,5 @@ def load_config(env_path: Optional[Path] = None) -> Config:
         rotate_on_tie=rotate_on_tie,
         proxy_require_tls=proxy_require_tls,
         proxy_tls_terminated=proxy_tls_terminated,
+        time_zone=time_zone,
     )

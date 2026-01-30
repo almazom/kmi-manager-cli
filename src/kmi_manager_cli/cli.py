@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import typer
 
 from kmi_manager_cli import __version__
@@ -56,12 +57,24 @@ rotate_app = typer.Typer(help="Rotation commands")
 
 def _ensure_single_mode(*flags: bool) -> None:
     if sum(1 for flag in flags if flag) > 1:
-        raise typer.BadParameter("Choose only one mode: --rotate, --auto_rotate, --trace, --all, --health, or --status")
+        raise typer.BadParameter(
+            "Choose only one mode: --rotate, --auto_rotate, --trace, --all, --health, --current, or --status"
+        )
 
 
-def _note_dry_run(config) -> None:
+def _apply_output_flags(plain: bool, no_color: bool) -> None:
+    if plain:
+        os.environ["KMI_PLAIN"] = "1"
+    if no_color:
+        os.environ["KMI_NO_COLOR"] = "1"
+        os.environ["NO_COLOR"] = "1"
+
+
+def _note_mode(config) -> None:
     if config.dry_run:
-        typer.echo("NOTE: KMI_DRY_RUN=1 (dry-run enabled; upstream requests are simulated).")
+        typer.echo("MODE: DRY-RUN (upstream requests are simulated).")
+    else:
+        typer.echo("MODE: LIVE (upstream requests enabled).")
 
 
 def _load_registry_or_exit(config):
@@ -73,7 +86,7 @@ def _load_registry_or_exit(config):
 
 
 def _manual_rotate(config) -> None:
-    _note_dry_run(config)
+    _note_mode(config)
     registry = _load_registry_or_exit(config)
     state = load_state(config, registry)
     idx = max(0, min(state.active_index, len(registry.keys) - 1))
@@ -106,6 +119,7 @@ def _manual_rotate(config) -> None:
         reason=reason,
         dry_run=config.dry_run,
         previous_label=previous_label,
+        time_zone=config.time_zone,
     )
 
 
@@ -139,7 +153,7 @@ def _current_config_path() -> Path:
 
 
 def _render_accounts_health(config) -> None:
-    _note_dry_run(config)
+    _note_mode(config)
     registry = load_auths_dir(config.auths_dir, config.upstream_base_url, config.upstream_allowlist)
     state = load_state(config, registry)
     if registry.keys:
@@ -158,11 +172,11 @@ def _render_accounts_health(config) -> None:
         typer.echo(no_keys_message(config))
         raise typer.Exit(code=1)
     health = get_accounts_health(config, accounts, state, force_real=True)
-    render_accounts_health_dashboard(accounts, state, health, dry_run=config.dry_run)
+    render_accounts_health_dashboard(accounts, state, health, dry_run=config.dry_run, time_zone=config.time_zone)
 
 
 def _render_current_health(config) -> None:
-    _note_dry_run(config)
+    _note_mode(config)
     registry = load_auths_dir(config.auths_dir, config.upstream_base_url, config.upstream_allowlist)
     state = load_state(config, registry)
     if registry.keys:
@@ -191,10 +205,11 @@ def _render_current_health(config) -> None:
             )
             break
     health = get_accounts_health(config, [current], state, force_real=True)
-    render_accounts_health_dashboard([current], state, health, dry_run=config.dry_run)
+    render_accounts_health_dashboard([current], state, health, dry_run=config.dry_run, time_zone=config.time_zone)
 
 
 def _render_status(config) -> None:
+    _note_mode(config)
     registry = _load_registry_or_exit(config)
     state = load_state(config, registry)
     idx = max(0, min(state.active_index, len(registry.keys) - 1))
@@ -215,14 +230,18 @@ def main_callback(
     ),
     trace: bool = typer.Option(False, "--trace", help="Show live trace window."),
     all_: bool = typer.Option(False, "--all", help="Show health of all keys."),
-    health_flag: bool = typer.Option(False, "--health", help="Show health for current key only."),
+    health_flag: bool = typer.Option(False, "--health", help="Show health for all keys."),
+    current_flag: bool = typer.Option(False, "--current", help="Show health for current key only."),
     status_flag: bool = typer.Option(False, "--status", help="Show current rotation status."),
+    plain: bool = typer.Option(False, "--plain", help="Disable rich formatting (plain text)."),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors (NO_COLOR)."),
 ) -> None:
+    _apply_output_flags(plain, no_color)
     if ctx.invoked_subcommand:
         return
-    _ensure_single_mode(rotate, auto_rotate, trace, all_, health_flag, status_flag)
+    _ensure_single_mode(rotate, auto_rotate, trace, all_, health_flag, current_flag, status_flag)
 
-    if not any([rotate, auto_rotate, trace, all_, health_flag, status_flag]):
+    if not any([rotate, auto_rotate, trace, all_, health_flag, current_flag, status_flag]):
         typer.echo(ctx.get_help())
         raise typer.Exit()
 
@@ -236,10 +255,10 @@ def main_callback(
     if trace:
         run_trace_tui(config)
         raise typer.Exit()
-    if all_:
+    if health_flag or all_:
         _render_accounts_health(config)
         raise typer.Exit()
-    if health_flag:
+    if current_flag:
         _render_current_health(config)
         raise typer.Exit()
     if status_flag:
@@ -259,7 +278,7 @@ def main() -> None:
 def proxy() -> None:
     """Start the local proxy server."""
     config = load_config()
-    _note_dry_run(config)
+    _note_mode(config)
     registry = _load_registry_or_exit(config)
     state = load_state(config, registry)
     typer.echo(f"Starting proxy at http://{config.proxy_listen}{config.proxy_base_path}")
@@ -274,7 +293,7 @@ def proxy() -> None:
 def trace() -> None:
     """Show live trace view."""
     config = load_config()
-    _note_dry_run(config)
+    _note_mode(config)
     run_trace_tui(config)
 
 

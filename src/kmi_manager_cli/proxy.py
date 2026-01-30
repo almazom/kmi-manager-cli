@@ -20,7 +20,7 @@ from kmi_manager_cli.keys import Registry
 from kmi_manager_cli.logging import get_logger, log_event
 from kmi_manager_cli.rotation import mark_exhausted, select_key_for_request
 from kmi_manager_cli.state import State, record_request, save_state
-from kmi_manager_cli.trace import append_trace, msk_now_str
+from kmi_manager_cli.trace import append_trace, trace_now_str
 
 
 @dataclass
@@ -295,7 +295,7 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
             )
             ctx.trace_writer.enqueue(
                 {
-                    "ts_msk": msk_now_str(),
+                    "ts": trace_now_str(ctx.config),
                     "request_id": uuid.uuid4().hex,
                     "key_label": key_label,
                     "key_hash": key_record.key_hash if key_record else "",
@@ -359,7 +359,7 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
             )
             ctx.trace_writer.enqueue(
                 {
-                    "ts_msk": msk_now_str(),
+                    "ts": trace_now_str(ctx.config),
                     "request_id": uuid.uuid4().hex,
                     "key_label": key_label,
                     "key_hash": key_record.key_hash if key_record else "",
@@ -390,7 +390,7 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
         )
         ctx.trace_writer.enqueue(
             {
-                "ts_msk": msk_now_str(),
+                "ts": trace_now_str(ctx.config),
                 "request_id": uuid.uuid4().hex,
                 "key_label": key_label,
                 "key_hash": key_record.key_hash if key_record else "",

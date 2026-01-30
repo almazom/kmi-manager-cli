@@ -43,6 +43,8 @@ Notes:
 - Remote proxy binding requires `KMI_PROXY_ALLOW_REMOTE=1` and `KMI_PROXY_TOKEN`.
 - For non-local proxy binding, run behind TLS and set `KMI_PROXY_TLS_TERMINATED=1` (or set `KMI_PROXY_REQUIRE_TLS=0` to override).
 - Optional per-key limits: `KMI_PROXY_MAX_RPS_PER_KEY` and `KMI_PROXY_MAX_RPM_PER_KEY`.
+- `KMI_TIMEZONE` controls timestamps (default `local`; accepts `UTC`, `+03:00`, or IANA names).
+- `KMI_LOCALE` controls human-facing summaries (default `en`, set `ru` for Russian).
 
 ## Paths
 

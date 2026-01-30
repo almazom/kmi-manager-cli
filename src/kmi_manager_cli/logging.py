@@ -3,17 +3,22 @@ from __future__ import annotations
 import json
 import logging
 from logging.handlers import RotatingFileHandler
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from kmi_manager_cli.config import Config
+from kmi_manager_cli.time_utils import format_timestamp, resolve_timezone
 
 
 class JsonFormatter(logging.Formatter):
+    def __init__(self, time_zone: str) -> None:
+        super().__init__()
+        self._tzinfo = resolve_timezone(time_zone)
+
     def format(self, record: logging.LogRecord) -> str:
         payload = {
-            "ts_msk": _msk_now(),
+            "ts": format_timestamp(datetime.now(timezone.utc), self._tzinfo),
             "level": record.levelname,
             "message": record.getMessage(),
         }
@@ -21,10 +26,6 @@ class JsonFormatter(logging.Formatter):
         if extras:
             payload.update(extras)
         return json.dumps(payload, ensure_ascii=True)
-
-
-def _msk_now() -> str:
-    return (datetime.now(timezone.utc) + timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S MSK")
 
 
 def get_logger(config: Config, name: str = "kmi") -> logging.Logger:
@@ -39,7 +40,7 @@ def get_logger(config: Config, name: str = "kmi") -> logging.Logger:
         maxBytes=config.log_max_bytes,
         backupCount=config.log_max_backups,
     )
-    handler.setFormatter(JsonFormatter())
+    handler.setFormatter(JsonFormatter(config.time_zone))
     logger.addHandler(handler)
     return logger
 

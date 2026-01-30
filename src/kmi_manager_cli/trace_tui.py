@@ -3,15 +3,12 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from rich.console import Console
 from rich.live import Live
 from rich.table import Table
 
 from kmi_manager_cli.config import Config
 from kmi_manager_cli.trace import compute_confidence, compute_distribution, load_trace_entries, trace_path
-
-
-console = Console()
+from kmi_manager_cli.ui import get_console
 
 
 def _build_table(entries: list[dict], window: int) -> Table:
@@ -29,7 +26,7 @@ def _build_table(entries: list[dict], window: int) -> Table:
         warning = "WARNING confidence < 95%"
     title = f"KMI TRACE | window={window} | confidence={confidence}%"
     table = Table(title=title, caption=f"keys: {distribution}" + (f" | {warning}" if warning else ""))
-    table.add_column("ts_msk")
+    table.add_column("ts")
     table.add_column("req_id")
     table.add_column("key")
     table.add_column("endpoint")
@@ -38,7 +35,7 @@ def _build_table(entries: list[dict], window: int) -> Table:
 
     for entry in entries[-20:]:
         table.add_row(
-            str(entry.get("ts_msk", "")),
+            str(entry.get("ts", entry.get("ts_msk", ""))),
             str(entry.get("request_id", ""))[:8],
             str(entry.get("key_label", "")),
             str(entry.get("endpoint", "")),
@@ -49,6 +46,7 @@ def _build_table(entries: list[dict], window: int) -> Table:
 
 
 def run_trace_tui(config: Config, window: int = 200, refresh_seconds: float = 1.0) -> None:
+    console = get_console()
     path = trace_path(config)
     if config.dry_run:
         console.print("DRY RUN: upstream requests are simulated.")

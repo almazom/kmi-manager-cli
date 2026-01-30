@@ -23,7 +23,7 @@ def test_render_health_dashboard_no_crash() -> None:
             error_rate=0.0,
         )
     }
-    ui.console = Console(record=True, width=120)
-    ui.render_health_dashboard(registry, state, health)
-    output = ui.console.export_text()
+    console = Console(record=True, width=120)
+    ui.render_health_dashboard(registry, state, health, console=console)
+    output = console.export_text()
     assert "Status" in output
