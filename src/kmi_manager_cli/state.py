@@ -10,6 +10,8 @@ from kmi_manager_cli.config import Config
 from kmi_manager_cli.keys import Registry
 from kmi_manager_cli.locking import atomic_write_text, file_lock
 
+STATE_SCHEMA_VERSION = 1
+
 
 @dataclass
 class KeyState:
@@ -24,6 +26,7 @@ class KeyState:
 
 @dataclass
 class State:
+    schema_version: int = STATE_SCHEMA_VERSION
     active_index: int = 0
     rotation_index: int = 0
     auto_rotate: bool = False
@@ -31,6 +34,7 @@ class State:
 
     def to_dict(self) -> dict:
         return {
+            "schema_version": self.schema_version,
             "active_index": self.active_index,
             "rotation_index": self.rotation_index,
             "auto_rotate": self.auto_rotate,
@@ -39,8 +43,10 @@ class State:
 
     @classmethod
     def from_dict(cls, data: dict) -> "State":
+        schema_version = int(data.get("schema_version", STATE_SCHEMA_VERSION))
         keys = {label: KeyState(**info) for label, info in data.get("keys", {}).items()}
         return cls(
+            schema_version=schema_version,
             active_index=int(data.get("active_index", 0)),
             rotation_index=int(data.get("rotation_index", 0)),
             auto_rotate=bool(data.get("auto_rotate", False)),

@@ -34,6 +34,7 @@ def test_state_persists_active_index(tmp_path: Path) -> None:
     loaded = load_state(config, registry)
     assert loaded.active_index == 0
     assert "alpha" in loaded.keys
+    assert loaded.schema_version == 1
 
 
 def test_load_state_recovers_corrupt_file(tmp_path: Path) -> None:
@@ -60,5 +61,6 @@ def test_load_state_recovers_corrupt_file(tmp_path: Path) -> None:
 
     state = load_state(config, registry)
     assert "alpha" in state.keys
+    assert state.schema_version == 1
     corrupt_files = list(tmp_path.glob("state.json.corrupt.*"))
     assert corrupt_files

@@ -12,6 +12,7 @@ from kmi_manager_cli.locking import file_lock
 
 
 MSK_OFFSET = timedelta(hours=3)
+TRACE_SCHEMA_VERSION = 1
 
 
 def msk_now_str() -> str:
@@ -46,6 +47,7 @@ def _rotate_trace_if_needed(path: Path, max_bytes: int, max_backups: int) -> Non
 
 
 def append_trace(config: Config, entry: dict) -> None:
+    entry.setdefault("schema_version", TRACE_SCHEMA_VERSION)
     path = trace_path(config)
     with file_lock(path):
         _rotate_trace_if_needed(path, config.trace_max_bytes, config.trace_max_backups)

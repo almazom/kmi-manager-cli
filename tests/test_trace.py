@@ -47,3 +47,4 @@ def test_append_and_load_trace(tmp_path: Path) -> None:
     append_trace(config, {"key_label": "a", "status": 200})
     entries = load_trace_entries(trace_path(config), window=10)
     assert entries[-1]["key_label"] == "a"
+    assert entries[-1]["schema_version"] == 1
