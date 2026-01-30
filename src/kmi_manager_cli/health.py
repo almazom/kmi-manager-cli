@@ -7,6 +7,7 @@ import httpx
 
 from kmi_manager_cli.auth_accounts import Account
 from kmi_manager_cli.config import Config
+from kmi_manager_cli.logging import get_logger, log_event
 from kmi_manager_cli.keys import Registry
 from kmi_manager_cli.state import KeyState, State
 from kmi_manager_cli.rotation import is_exhausted
@@ -203,7 +204,13 @@ def _extract_usage_summary(payload: dict) -> tuple[Optional[int], Optional[int],
     return used, limit, remaining, reset_hint
 
 
-def fetch_usage(base_url: str, api_key: str, dry_run: bool = False) -> Optional[Usage]:
+def fetch_usage(
+    base_url: str,
+    api_key: str,
+    dry_run: bool = False,
+    logger=None,
+    label: Optional[str] = None,
+) -> Optional[Usage]:
     if dry_run:
         return Usage(
             remaining_percent=100.0,
@@ -219,7 +226,15 @@ def fetch_usage(base_url: str, api_key: str, dry_run: bool = False) -> Optional[
         resp = httpx.get(url, headers={"Authorization": f"Bearer {api_key}"}, timeout=10.0)
         resp.raise_for_status()
         payload = resp.json() if resp.content else {}
-    except Exception:
+    except Exception as exc:
+        if logger is not None:
+            log_event(
+                logger,
+                "usage_fetch_failed",
+                base_url=base_url,
+                key_label=label or "unknown",
+                error=str(exc),
+            )
         return None
     limits = _parse_limits(payload)
     email = _extract_email_from_payload(payload)
@@ -284,8 +299,15 @@ def score_key(usage: Optional[Usage], key_state: KeyState, exhausted: bool) -> s
 
 def get_health_map(config: Config, registry: Registry, state: State) -> dict[str, HealthInfo]:
     health: dict[str, HealthInfo] = {}
+    logger = get_logger(config)
     for key in registry.keys:
-        usage = fetch_usage(config.upstream_base_url, key.api_key, dry_run=config.dry_run)
+        usage = fetch_usage(
+            config.upstream_base_url,
+            key.api_key,
+            dry_run=config.dry_run,
+            logger=logger,
+            label=key.label,
+        )
         key_state = state.keys.get(key.label, KeyState())
         total = max(key_state.request_count, 1)
         error_rate = (key_state.error_403 + key_state.error_429 + key_state.error_5xx) / total
@@ -306,8 +328,15 @@ def get_health_map(config: Config, registry: Registry, state: State) -> dict[str
 
 def get_accounts_health(config: Config, accounts: list[Account], state: State, force_real: bool = False) -> dict[str, HealthInfo]:
     health: dict[str, HealthInfo] = {}
+    logger = get_logger(config)
     for account in accounts:
-        usage = fetch_usage(account.base_url, account.api_key, dry_run=(False if force_real else config.dry_run))
+        usage = fetch_usage(
+            account.base_url,
+            account.api_key,
+            dry_run=(False if force_real else config.dry_run),
+            logger=logger,
+            label=account.label,
+        )
         key_state = state.keys.get(account.label, KeyState())
         total = max(key_state.request_count, 1)
         error_rate = (key_state.error_403 + key_state.error_429 + key_state.error_5xx) / total
