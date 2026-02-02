@@ -7,7 +7,10 @@ from typing import Iterable, Optional
 
 from dotenv import dotenv_values
 
-from kmi_manager_cli.auth_accounts import collect_auth_files, load_accounts_from_auths_dir
+from kmi_manager_cli.auth_accounts import (
+    collect_auth_files,
+    load_accounts_from_auths_dir,
+)
 from kmi_manager_cli.config import DEFAULT_KMI_UPSTREAM_BASE_URL
 from kmi_manager_cli.security import warn_if_insecure
 
@@ -56,7 +59,6 @@ class Registry:
             if key.label == label:
                 return key
         return None
-
 
 
 def load_env_file(path: Path) -> dict[str, str]:

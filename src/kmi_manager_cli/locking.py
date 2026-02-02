@@ -27,7 +27,9 @@ def file_lock(path: Path) -> Iterator[None]:
             fd = None
             while fd is None:
                 try:
-                    fd = os.open(str(lock_path) + ".win", os.O_CREAT | os.O_EXCL | os.O_RDWR)
+                    fd = os.open(
+                        str(lock_path) + ".win", os.O_CREAT | os.O_EXCL | os.O_RDWR
+                    )
                 except FileExistsError:
                     time.sleep(0.05)
         try:

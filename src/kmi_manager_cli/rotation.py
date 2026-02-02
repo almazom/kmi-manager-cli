@@ -9,7 +9,9 @@ if TYPE_CHECKING:
     from kmi_manager_cli.health import HealthInfo
 
 
-def _is_eligible(key: KeyRecord, state: State, health: Optional[dict[str, HealthInfo]] = None) -> bool:
+def _is_eligible(
+    key: KeyRecord, state: State, health: Optional[dict[str, HealthInfo]] = None
+) -> bool:
     if key.disabled:
         return False
     if is_blocked(state, key.label):
@@ -88,7 +90,9 @@ def _manual_score(info: Optional[HealthInfo]) -> tuple:
     return (_status_rank(info), remaining_sort, error_rate)
 
 
-def _candidate_sort_key(key: KeyRecord, info: Optional[HealthInfo], is_current: bool) -> tuple:
+def _candidate_sort_key(
+    key: KeyRecord, info: Optional[HealthInfo], is_current: bool
+) -> tuple:
     current_rank = 0 if is_current else 1
     return (*_manual_score(info), current_rank, key.label)
 
@@ -141,7 +145,9 @@ def rotate_manual(
     health: Optional[dict[str, HealthInfo]] = None,
     prefer_next_on_tie: bool = False,
 ) -> tuple[KeyRecord, bool, Optional[str]]:
-    candidates = _manual_candidates(registry, state, health) if health is not None else None
+    candidates = (
+        _manual_candidates(registry, state, health) if health is not None else None
+    )
     current_idx = state.active_index
     if health is None:
         idx = most_resourceful_index(registry, state, health)
@@ -181,7 +187,9 @@ def rotate_manual(
                 key=lambda item: _candidate_sort_key(item[1], item[2], False),
             )
             current_info = health.get(key.label)
-            runner = next((entry for entry in sorted_candidates if entry[0] != current_idx), None)
+            runner = next(
+                (entry for entry in sorted_candidates if entry[0] != current_idx), None
+            )
             cur_remaining = _resource_value(current_info)
             if runner:
                 runner_info = runner[2]
@@ -201,12 +209,20 @@ def rotate_manual(
                         f"Current key has higher remaining quota ({cur_remaining:.0f}%), "
                         f"next best {runner[1].label} has {runner_remaining:.0f}%."
                     )
-                elif current_info and runner_info and current_info.error_rate != runner_info.error_rate:
+                elif (
+                    current_info
+                    and runner_info
+                    and current_info.error_rate != runner_info.error_rate
+                ):
                     reason = (
                         f"Current key has lower error rate ({current_info.error_rate * 100:.1f}%), "
                         f"next best {runner[1].label} has {runner_info.error_rate * 100:.1f}%."
                     )
-                elif current_info and runner_info and current_info.status != runner_info.status:
+                elif (
+                    current_info
+                    and runner_info
+                    and current_info.status != runner_info.status
+                ):
                     reason = (
                         f"Current key has better status ({current_info.status}) than {runner[1].label} "
                         f"({runner_info.status})."
@@ -243,7 +259,9 @@ def select_key_round_robin(
                 info
                 and info.status == "healthy"
                 and _is_eligible(candidate, state, health)
-                and _usage_ok(health, candidate.label, require_usage_ok, fail_open_on_empty_cache)
+                and _usage_ok(
+                    health, candidate.label, require_usage_ok, fail_open_on_empty_cache
+                )
             ):
                 state.rotation_index = (idx + 1) % total
                 mark_last_used(state, candidate.label)
@@ -277,8 +295,10 @@ def select_key_for_request(
             fail_open_on_empty_cache=fail_open_on_empty_cache,
         )
     active = registry.active_key
-    if active and _is_eligible(active, state, health) and _usage_ok(
-        health, active.label, require_usage_ok, fail_open_on_empty_cache
+    if (
+        active
+        and _is_eligible(active, state, health)
+        and _usage_ok(health, active.label, require_usage_ok, fail_open_on_empty_cache)
     ):
         return active
     idx = next_healthy_index(
@@ -296,7 +316,9 @@ def select_key_for_request(
     return key
 
 
-def mark_blocked(state: State, label: str, reason: str, block_seconds: Optional[int]) -> None:
+def mark_blocked(
+    state: State, label: str, reason: str, block_seconds: Optional[int]
+) -> None:
     if label not in state.keys:
         state.keys[label] = KeyState()
     key_state = state.keys[label]
@@ -336,7 +358,9 @@ def is_blocked(state: State, label: str) -> bool:
         return False
     if key_state.blocked_until:
         try:
-            until = datetime.fromisoformat(key_state.blocked_until.replace("Z", "+00:00"))
+            until = datetime.fromisoformat(
+                key_state.blocked_until.replace("Z", "+00:00")
+            )
         except ValueError:
             return True
         return datetime.now(timezone.utc) < until

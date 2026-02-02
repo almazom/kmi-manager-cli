@@ -8,6 +8,9 @@ import sys
 import time
 import shutil
 import signal
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
 import typer
 import httpx
 
@@ -35,7 +38,7 @@ from kmi_manager_cli.auth_accounts import (
 )
 from kmi_manager_cli.errors import no_keys_message, remediation_message
 from kmi_manager_cli.health import get_accounts_health, get_health_map
-from kmi_manager_cli.keys import Registry, load_auths_dir
+from kmi_manager_cli.keys import load_auths_dir
 from kmi_manager_cli.logging import get_logger
 from kmi_manager_cli.proxy import parse_listen, run_proxy
 from kmi_manager_cli.rotation import is_blocked, is_exhausted, rotate_manual
@@ -49,8 +52,6 @@ from rich.text import Text
 from kmi_manager_cli.ui import (
     get_console,
     render_accounts_health_dashboard,
-    render_health_dashboard,
-    render_registry_table,
     render_rotation_dashboard,
 )
 from kmi_manager_cli.doctor import run_doctor
@@ -151,7 +152,9 @@ def _manual_rotate(config) -> None:
     previous_label = registry.keys[idx].label if registry.keys else "none"
     health = get_health_map(config, registry, state)
     try:
-        active, rotated, reason = rotate_manual(registry, state, health=health, prefer_next_on_tie=config.rotate_on_tie)
+        active, rotated, reason = rotate_manual(
+            registry, state, health=health, prefer_next_on_tie=config.rotate_on_tie
+        )
     except RuntimeError:
         typer.echo(remediation_message())
         raise typer.Exit(code=1)
@@ -173,7 +176,9 @@ def _manual_rotate(config) -> None:
                 dest=str(_current_config_path()),
             )
         else:
-            typer.echo("Warning: rotate config requires a .toml auth file; rotation state updated only.")
+            typer.echo(
+                "Warning: rotate config requires a .toml auth file; rotation state updated only."
+            )
     render_rotation_dashboard(
         active.label,
         registry,
@@ -189,7 +194,9 @@ def _manual_rotate(config) -> None:
 
 def _enable_auto_rotate(config) -> None:
     if not config.auto_rotate_allowed:
-        typer.echo("Auto-rotation is disabled by policy (KMI_AUTO_ROTATE_ALLOWED=false).")
+        typer.echo(
+            "Auto-rotation is disabled by policy (KMI_AUTO_ROTATE_ALLOWED=false)."
+        )
         raise typer.Exit(code=1)
     registry = _load_registry_or_exit(config)
     state = load_state(config, registry)
@@ -246,7 +253,9 @@ def _render_accounts_health(config) -> None:
         typer.echo(no_keys_message(config))
         raise typer.Exit(code=1)
     health = get_accounts_health(config, accounts, state, force_real=False)
-    render_accounts_health_dashboard(accounts, state, health, dry_run=config.dry_run, time_zone=config.time_zone)
+    render_accounts_health_dashboard(
+        accounts, state, health, dry_run=config.dry_run, time_zone=config.time_zone
+    )
 
 
 def _render_current_health(config) -> None:
@@ -284,7 +293,9 @@ def _render_current_health(config) -> None:
             )
             break
     health = get_accounts_health(config, [current], state, force_real=False)
-    render_accounts_health_dashboard([current], state, health, dry_run=config.dry_run, time_zone=config.time_zone)
+    render_accounts_health_dashboard(
+        [current], state, health, dry_run=config.dry_run, time_zone=config.time_zone
+    )
 
 
 def _build_status_payload(config, registry, state) -> dict:
@@ -392,7 +403,12 @@ def _render_status(config, *, as_json: bool = False) -> None:
         Text.assemble(
             (f"{keys_emoji} ", keys_color),
             ("Keys: ", "bold"),
-            ("total={total} disabled={disabled} blocked={blocked} exhausted={exhausted}".format(**keys), ""),
+            (
+                "total={total} disabled={disabled} blocked={blocked} exhausted={exhausted}".format(
+                    **keys
+                ),
+                "",
+            ),
         ),
         Text.assemble(("🔑 Active key: ", "cyan"), (payload["active_key"], "")),
     ]
@@ -420,7 +436,9 @@ def _render_status(config, *, as_json: bool = False) -> None:
             ),
         ),
     ]
-    console.print(Panel(Group(*rotation_lines), title="Rotation & Policy", border_style="blue"))
+    console.print(
+        Panel(Group(*rotation_lines), title="Rotation & Policy", border_style="blue")
+    )
     console.print()
 
     cache = payload["cache"]
@@ -438,10 +456,18 @@ def _render_status(config, *, as_json: bool = False) -> None:
                 "",
             ),
         ),
-        Text.assemble(("💳 Payment block: ", "cyan"), (f"{payload['payment_block_seconds']}s", "")),
-        Text.assemble((f"{refresh_emoji} ", refresh_color), ("Health refresh: ", "bold"), (last_refresh or "never", "")),
+        Text.assemble(
+            ("💳 Payment block: ", "cyan"), (f"{payload['payment_block_seconds']}s", "")
+        ),
+        Text.assemble(
+            (f"{refresh_emoji} ", refresh_color),
+            ("Health refresh: ", "bold"),
+            (last_refresh or "never", ""),
+        ),
     ]
-    console.print(Panel(Group(*cache_lines), title="Cache & Health", border_style=refresh_color))
+    console.print(
+        Panel(Group(*cache_lines), title="Cache & Health", border_style=refresh_color)
+    )
     console.print()
 
     log_line = Text.assemble(("🧾 Daemon log: ", "cyan"), (proxy["daemon_log"], ""))
@@ -451,9 +477,13 @@ def _render_status(config, *, as_json: bool = False) -> None:
     if not proxy["running"]:
         alerts.append(Text("Proxy is not running.", style="red"))
     if keys["blocked"] > 0:
-        alerts.append(Text(f"{keys['blocked']} key(s) blocked (payment/auth).", style="red"))
+        alerts.append(
+            Text(f"{keys['blocked']} key(s) blocked (payment/auth).", style="red")
+        )
     if keys["exhausted"] > 0:
-        alerts.append(Text(f"{keys['exhausted']} key(s) exhausted (cooldown).", style="red"))
+        alerts.append(
+            Text(f"{keys['exhausted']} key(s) exhausted (cooldown).", style="red")
+        )
     if not refresh_ok:
         alerts.append(Text("No health refresh recorded yet.", style="yellow"))
     if alerts:
@@ -464,7 +494,9 @@ def _render_status(config, *, as_json: bool = False) -> None:
 @app.callback(invoke_without_command=True)
 def main_callback(
     ctx: typer.Context,
-    rotate: bool = typer.Option(False, "--rotate", help="Manually rotate to the most resourceful key."),
+    rotate: bool = typer.Option(
+        False, "--rotate", help="Manually rotate to the most resourceful key."
+    ),
     auto_rotate: bool = typer.Option(
         False,
         "--auto_rotate",
@@ -473,18 +505,32 @@ def main_callback(
     ),
     trace: bool = typer.Option(False, "--trace", help="Show live trace window."),
     all_: bool = typer.Option(False, "--all", help="Show health of all keys."),
-    health_flag: bool = typer.Option(False, "--health", help="Show health for all keys."),
-    current_flag: bool = typer.Option(False, "--current", help="Show health for current key only."),
-    status_flag: bool = typer.Option(False, "--status", help="Show current rotation status."),
-    plain: bool = typer.Option(False, "--plain", help="Disable rich formatting (plain text)."),
-    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors (NO_COLOR)."),
+    health_flag: bool = typer.Option(
+        False, "--health", help="Show health for all keys."
+    ),
+    current_flag: bool = typer.Option(
+        False, "--current", help="Show health for current key only."
+    ),
+    status_flag: bool = typer.Option(
+        False, "--status", help="Show current rotation status."
+    ),
+    plain: bool = typer.Option(
+        False, "--plain", help="Disable rich formatting (plain text)."
+    ),
+    no_color: bool = typer.Option(
+        False, "--no-color", help="Disable ANSI colors (NO_COLOR)."
+    ),
 ) -> None:
     _apply_output_flags(plain, no_color)
     if ctx.invoked_subcommand:
         return
-    _ensure_single_mode(rotate, auto_rotate, trace, all_, health_flag, current_flag, status_flag)
+    _ensure_single_mode(
+        rotate, auto_rotate, trace, all_, health_flag, current_flag, status_flag
+    )
 
-    if not any([rotate, auto_rotate, trace, all_, health_flag, current_flag, status_flag]):
+    if not any(
+        [rotate, auto_rotate, trace, all_, health_flag, current_flag, status_flag]
+    ):
         typer.echo(ctx.get_help())
         raise typer.Exit()
 
@@ -543,9 +589,13 @@ def proxy(
     _note_mode(config)
     _ensure_proxy_port_free(config)
     scheme = "https" if config.proxy_tls_terminated else "http"
-    typer.echo(f"🚀 Starting proxy at {scheme}://{config.proxy_listen}{config.proxy_base_path}")
+    typer.echo(
+        f"🚀 Starting proxy at {scheme}://{config.proxy_listen}{config.proxy_base_path}"
+    )
     if config.proxy_require_tls and not config.proxy_tls_terminated:
-        typer.echo("Note: TLS termination required for remote access (set KMI_PROXY_TLS_TERMINATED=1).")
+        typer.echo(
+            "Note: TLS termination required for remote access (set KMI_PROXY_TLS_TERMINATED=1)."
+        )
     if daemon:
         _load_registry_or_exit(config)
         _start_proxy_daemon(config)
@@ -577,23 +627,42 @@ def proxy_stop(
 
 @app.command("proxy-logs")
 def proxy_logs(
-    follow: bool = typer.Option(True, "--follow/--no-follow", help="Follow logs (tail -f)."),
+    follow: bool = typer.Option(
+        True, "--follow/--no-follow", help="Follow logs (tail -f)."
+    ),
     lines: int = typer.Option(200, "--lines", "-n", help="Number of lines to show."),
-    daemon: bool = typer.Option(True, "--daemon/--app", help="Show proxy daemon logs or app logs."),
-    since: str = typer.Option("", "--since", help="Filter app logs since time (e.g. 10m, 1h, 2026-02-02T12:00:00Z)."),
-    sleep_seconds: float = typer.Option(0.5, "--sleep", help="Follow poll interval in seconds."),
+    daemon: bool = typer.Option(
+        True, "--daemon/--app", help="Show proxy daemon logs or app logs."
+    ),
+    since: str = typer.Option(
+        "",
+        "--since",
+        help="Filter app logs since time (e.g. 10m, 1h, 2026-02-02T12:00:00Z).",
+    ),
+    sleep_seconds: float = typer.Option(
+        0.5, "--sleep", help="Follow poll interval in seconds."
+    ),
 ) -> None:
     """Tail proxy logs (daemon stdout/stderr or app logs)."""
     config = _load_config_or_exit()
     path = _proxy_daemon_log_path(config) if daemon else _app_log_path(config)
     since_dt = _parse_since(since)
     if since and since_dt is None:
-        typer.echo("Invalid --since value. Use 10m/1h/30s or ISO timestamp (e.g. 2026-02-02T12:00:00Z).")
+        typer.echo(
+            "Invalid --since value. Use 10m/1h/30s or ISO timestamp (e.g. 2026-02-02T12:00:00Z)."
+        )
         raise typer.Exit(code=2)
     if daemon and since_dt is not None:
         typer.echo("Note: --since works only with --app logs; ignoring filter.")
         since_dt = None
-    _tail_file(path, lines=lines, follow=follow, sleep_seconds=sleep_seconds, since=since_dt, json_lines=not daemon)
+    _tail_file(
+        path,
+        lines=lines,
+        follow=follow,
+        sleep_seconds=sleep_seconds,
+        since=since_dt,
+        json_lines=not daemon,
+    )
 
 
 @app.command("proxy-restart")
@@ -687,7 +756,9 @@ def _parse_since(value: str) -> Optional[datetime]:
     return parsed
 
 
-def _filter_lines_since(lines: list[str], since: Optional[datetime], json_lines: bool) -> list[str]:
+def _filter_lines_since(
+    lines: list[str], since: Optional[datetime], json_lines: bool
+) -> list[str]:
     if since is None:
         return lines
     filtered: list[str] = []
@@ -775,7 +846,9 @@ def _ensure_proxy_port_free(config: Config) -> None:
     typer.echo(f"⚠️ Existing listener detected on {connect_host}:{port}")
     pids = _find_listening_pids(port)
     if pids is None:
-        typer.echo("❌ 'lsof' not available; cannot auto-stop. Use Ctrl+C or kmi proxy-stop.")
+        typer.echo(
+            "❌ 'lsof' not available; cannot auto-stop. Use Ctrl+C or kmi proxy-stop."
+        )
         raise typer.Exit(code=1)
     typer.echo(f"🛑 Stopping PID(s): {', '.join(str(pid) for pid in pids)}")
     _terminate_pids(pids, force=False)
@@ -828,7 +901,9 @@ def _stop_proxy(config: Config, *, yes: bool, force: bool) -> bool:
     if not pids:
         typer.echo(f"No process is listening on {host}:{port}.")
         return False
-    typer.echo(f"Found listener(s) on {host}:{port}: {', '.join(str(pid) for pid in pids)}")
+    typer.echo(
+        f"Found listener(s) on {host}:{port}: {', '.join(str(pid) for pid in pids)}"
+    )
     if not yes and not typer.confirm("Stop these process(es)?"):
         return False
     _terminate_pids(pids, force)
@@ -882,7 +957,9 @@ def _run_e2e(
     if show_mode:
         _note_mode(config)
     if not config.auto_rotate_allowed:
-        typer.echo("Auto-rotation is disabled by policy (KMI_AUTO_ROTATE_ALLOWED=false).")
+        typer.echo(
+            "Auto-rotation is disabled by policy (KMI_AUTO_ROTATE_ALLOWED=false)."
+        )
         raise typer.Exit(code=1)
     if enable_auto_rotate:
         _enable_auto_rotate(config)
@@ -894,9 +971,13 @@ def _run_e2e(
     if not _proxy_listening(connect_host, port):
         typer.echo("Proxy is not running; starting it now...")
         try:
-            started_proc = subprocess.Popen(["kmi", "proxy"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            started_proc = subprocess.Popen(
+                ["kmi", "proxy"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
         except FileNotFoundError:
-            typer.echo("Unable to start proxy via 'kmi proxy'. Ensure 'kmi' is in PATH.")
+            typer.echo(
+                "Unable to start proxy via 'kmi proxy'. Ensure 'kmi' is in PATH."
+            )
             raise typer.Exit(code=1)
         for _ in range(20):
             time.sleep(0.5)
@@ -950,7 +1031,9 @@ def _run_e2e(
                     f"sent={total_sent}/{requests} trace={len(collected)} keys={keys_seen}/{len(registry.keys)} "
                     f"confidence={confidence}% errors={errors}"
                 )
-                if confidence >= min_confidence and len(sample) >= min(window, requests):
+                if confidence >= min_confidence and len(sample) >= min(
+                    window, requests
+                ):
                     break
     finally:
         if started_proc:
@@ -972,14 +1055,30 @@ def _run_e2e(
 
 @app.command()
 def e2e(
-    requests: int = typer.Option(DEFAULT_E2E_REQUESTS, "--requests", "-n", help="Total requests to send."),
+    requests: int = typer.Option(
+        DEFAULT_E2E_REQUESTS, "--requests", "-n", help="Total requests to send."
+    ),
     batch: int = typer.Option(DEFAULT_E2E_BATCH, "--batch", help="Requests per batch."),
-    window: int = typer.Option(DEFAULT_E2E_WINDOW, "--window", help="Window size for confidence."),
-    endpoint: str = typer.Option(DEFAULT_E2E_ENDPOINT, "--endpoint", help="Endpoint path to hit via proxy."),
-    min_confidence: float = typer.Option(DEFAULT_E2E_MIN_CONFIDENCE, "--min-confidence", help="Target confidence threshold."),
-    timeout: float = typer.Option(DEFAULT_E2E_TIMEOUT, "--timeout", help="Per-request timeout (seconds)."),
-    pause: float = typer.Option(DEFAULT_E2E_PAUSE, "--pause", help="Pause between batches (seconds)."),
-    scheme: str = typer.Option(DEFAULT_E2E_SCHEME, "--scheme", help="Proxy scheme (http or https)."),
+    window: int = typer.Option(
+        DEFAULT_E2E_WINDOW, "--window", help="Window size for confidence."
+    ),
+    endpoint: str = typer.Option(
+        DEFAULT_E2E_ENDPOINT, "--endpoint", help="Endpoint path to hit via proxy."
+    ),
+    min_confidence: float = typer.Option(
+        DEFAULT_E2E_MIN_CONFIDENCE,
+        "--min-confidence",
+        help="Target confidence threshold.",
+    ),
+    timeout: float = typer.Option(
+        DEFAULT_E2E_TIMEOUT, "--timeout", help="Per-request timeout (seconds)."
+    ),
+    pause: float = typer.Option(
+        DEFAULT_E2E_PAUSE, "--pause", help="Pause between batches (seconds)."
+    ),
+    scheme: str = typer.Option(
+        DEFAULT_E2E_SCHEME, "--scheme", help="Proxy scheme (http or https)."
+    ),
 ) -> None:
     """Run a round-robin proxy E2E check."""
     config = _load_config_or_exit()
@@ -1007,8 +1106,12 @@ def trace() -> None:
 
 @app.command()
 def doctor(
-    plain: bool = typer.Option(False, "--plain", help="Disable rich formatting (plain text)."),
-    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors (NO_COLOR)."),
+    plain: bool = typer.Option(
+        False, "--plain", help="Disable rich formatting (plain text)."
+    ),
+    no_color: bool = typer.Option(
+        False, "--no-color", help="Disable ANSI colors (NO_COLOR)."
+    ),
     recheck_keys: bool = typer.Option(
         False,
         "--recheck-keys",
@@ -1023,14 +1126,20 @@ def doctor(
     """Run diagnostics and show a doctor report."""
     _apply_output_flags(plain, no_color)
     if recheck_keys and clear_blocklist:
-        raise typer.BadParameter("Choose only one: --recheck-keys or --clear-blocklist.")
+        raise typer.BadParameter(
+            "Choose only one: --recheck-keys or --clear-blocklist."
+        )
     config = _load_config_or_exit()
-    exit_code = run_doctor(config, recheck_keys=recheck_keys, clear_blocklist=clear_blocklist)
+    exit_code = run_doctor(
+        config, recheck_keys=recheck_keys, clear_blocklist=clear_blocklist
+    )
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
 
 
-@app.command("kimi", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(
+    "kimi", context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
+)
 def kimi_proxy(ctx: typer.Context) -> None:
     """Run kimi CLI with proxy env injected."""
     config = _load_config_or_exit()
@@ -1039,7 +1148,9 @@ def kimi_proxy(ctx: typer.Context) -> None:
         typer.echo("kimi executable not found in PATH.")
         raise typer.Exit(code=1)
     if config.proxy_token:
-        typer.echo("Warning: KMI_PROXY_TOKEN is set; kimi CLI does not send proxy auth headers.")
+        typer.echo(
+            "Warning: KMI_PROXY_TOKEN is set; kimi CLI does not send proxy auth headers."
+        )
     env = os.environ.copy()
     env["KIMI_BASE_URL"] = _proxy_base_url(config)
     env["KIMI_API_KEY"] = "proxy"

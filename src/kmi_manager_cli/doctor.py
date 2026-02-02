@@ -6,7 +6,7 @@ import json
 import os
 import socket
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable
 
 from rich.console import Group
 from rich.panel import Panel
@@ -76,7 +76,9 @@ def _format_age(seconds: float) -> str:
 
 def _file_status(path: Path, label: str) -> DoctorCheck:
     if not path.exists():
-        return DoctorCheck(label, "warn", "missing", "Run requests through proxy to create it.")
+        return DoctorCheck(
+            label, "warn", "missing", "Run requests through proxy to create it."
+        )
     mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
     age = _format_age((datetime.now(timezone.utc) - mtime).total_seconds())
     size_kb = max(1, int(path.stat().st_size / 1024))
@@ -98,7 +100,9 @@ def _check_env(config: Config) -> DoctorCheck:
 
 
 def _check_auths(config: Config) -> DoctorCheck:
-    registry = load_auths_dir(config.auths_dir, config.upstream_base_url, config.upstream_allowlist)
+    registry = load_auths_dir(
+        config.auths_dir, config.upstream_base_url, config.upstream_allowlist
+    )
     count = len(registry.keys)
     if count == 0:
         return DoctorCheck(
@@ -115,14 +119,21 @@ def _check_auths(config: Config) -> DoctorCheck:
 def _check_proxy(config: Config) -> DoctorCheck:
     host, port = config.proxy_listen.rsplit(":", 1)
     connect_host = _normalize_connect_host(host)
-    if connect_host not in {"127.0.0.1", "localhost", "::1"} and not config.proxy_allow_remote:
+    if (
+        connect_host not in {"127.0.0.1", "localhost", "::1"}
+        and not config.proxy_allow_remote
+    ):
         return DoctorCheck(
             "Proxy bind",
             "fail",
             f"remote bind disabled ({config.proxy_listen})",
             "Set KMI_PROXY_ALLOW_REMOTE=1 or use 127.0.0.1.",
         )
-    if connect_host not in {"127.0.0.1", "localhost", "::1"} and config.proxy_require_tls and not config.proxy_tls_terminated:
+    if (
+        connect_host not in {"127.0.0.1", "localhost", "::1"}
+        and config.proxy_require_tls
+        and not config.proxy_tls_terminated
+    ):
         return DoctorCheck(
             "Proxy TLS",
             "fail",
@@ -139,7 +150,9 @@ def _check_proxy(config: Config) -> DoctorCheck:
     listening = _proxy_listening(connect_host, int(port))
     if listening:
         return DoctorCheck("Proxy", "ok", f"listening on {connect_host}:{port}")
-    return DoctorCheck("Proxy", "warn", f"not running on {connect_host}:{port}", "Run: kmi proxy")
+    return DoctorCheck(
+        "Proxy", "warn", f"not running on {connect_host}:{port}", "Run: kmi proxy"
+    )
 
 
 def _check_kimi_env(config: Config) -> DoctorCheck:
@@ -161,18 +174,30 @@ def _check_kimi_env(config: Config) -> DoctorCheck:
             f'export KIMI_BASE_URL="{expected}"',
         )
     if not api_key:
-        return DoctorCheck("Kimi env", "warn", "KIMI_API_KEY not set", 'export KIMI_API_KEY="proxy"')
+        return DoctorCheck(
+            "Kimi env", "warn", "KIMI_API_KEY not set", 'export KIMI_API_KEY="proxy"'
+        )
     return DoctorCheck("Kimi env", "ok", "KIMI_BASE_URL and KIMI_API_KEY set")
 
 
 def _check_state(config: Config) -> DoctorCheck:
     state_path = config.state_dir.expanduser() / "state.json"
     if not state_path.exists():
-        return DoctorCheck("State", "warn", f"missing {state_path}", "Run any kmi command to create it.")
+        return DoctorCheck(
+            "State",
+            "warn",
+            f"missing {state_path}",
+            "Run any kmi command to create it.",
+        )
     try:
         data = json.loads(state_path.read_text())
     except json.JSONDecodeError:
-        return DoctorCheck("State", "fail", "state.json is corrupt", "Move/rename state.json and retry.")
+        return DoctorCheck(
+            "State",
+            "fail",
+            "state.json is corrupt",
+            "Move/rename state.json and retry.",
+        )
     auto_rotate = bool(data.get("auto_rotate", False))
     return DoctorCheck("State", "info", f"auto_rotate={'on' if auto_rotate else 'off'}")
 
@@ -213,7 +238,11 @@ def collect_checks(config: Config) -> list[DoctorCheck]:
     checks: list[DoctorCheck] = [
         _check_env(config),
         _check_auths(config),
-        DoctorCheck("Dry run", "warn" if config.dry_run else "ok", "enabled" if config.dry_run else "disabled"),
+        DoctorCheck(
+            "Dry run",
+            "warn" if config.dry_run else "ok",
+            "enabled" if config.dry_run else "disabled",
+        ),
         DoctorCheck(
             "Auto-rotate policy",
             "ok" if config.auto_rotate_allowed else "warn",
@@ -252,7 +281,9 @@ def _recheck_blocked_keys(config: Config, registry, state) -> tuple[int, int]:
     return cleared, remaining
 
 
-def run_doctor(config: Config, recheck_keys: bool = False, clear_blocklist: bool = False) -> int:
+def run_doctor(
+    config: Config, recheck_keys: bool = False, clear_blocklist: bool = False
+) -> int:
     console = get_console()
     checks = collect_checks(config)
     counts = {"ok": 0, "warn": 0, "fail": 0, "info": 0}
@@ -281,7 +312,9 @@ def run_doctor(config: Config, recheck_keys: bool = False, clear_blocklist: bool
     )
     console.print(summary)
     if recheck_keys or clear_blocklist:
-        registry = load_auths_dir(config.auths_dir, config.upstream_base_url, config.upstream_allowlist)
+        registry = load_auths_dir(
+            config.auths_dir, config.upstream_base_url, config.upstream_allowlist
+        )
         state = load_state(config, registry)
         if clear_blocklist:
             cleared = clear_blocked(state)
@@ -290,9 +323,13 @@ def run_doctor(config: Config, recheck_keys: bool = False, clear_blocklist: bool
             console.print(f"Blocked keys cleared: {cleared}")
         else:
             if config.dry_run:
-                console.print("Note: --recheck-keys uses live /usages calls even in dry-run.")
+                console.print(
+                    "Note: --recheck-keys uses live /usages calls even in dry-run."
+                )
             cleared, remaining = _recheck_blocked_keys(config, registry, state)
             if cleared:
                 save_state(config, state)
-            console.print(f"Blocked keys rechecked: cleared={cleared}, still_blocked={remaining}")
+            console.print(
+                f"Blocked keys rechecked: cleared={cleared}, still_blocked={remaining}"
+            )
     return 1 if counts["fail"] > 0 else 0

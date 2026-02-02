@@ -13,11 +13,19 @@ from kmi_manager_cli.auth_accounts import Account
 from kmi_manager_cli.health import HealthInfo, LimitInfo
 from kmi_manager_cli.keys import Registry, mask_key
 from kmi_manager_cli.state import State
-from kmi_manager_cli.time_utils import format_timestamp, parse_iso_timestamp, resolve_timezone
+from kmi_manager_cli.time_utils import (
+    format_timestamp,
+    parse_iso_timestamp,
+    resolve_timezone,
+)
 
 
 def _plain_output() -> bool:
-    return os.getenv("KMI_PLAIN") == "1" or os.getenv("KMI_NO_COLOR") == "1" or os.getenv("NO_COLOR") is not None
+    return (
+        os.getenv("KMI_PLAIN") == "1"
+        or os.getenv("KMI_NO_COLOR") == "1"
+        or os.getenv("NO_COLOR") is not None
+    )
 
 
 def get_console(console: Optional[Console] = None) -> Console:
@@ -53,10 +61,14 @@ def render_registry_table(
 
     for key in registry.keys:
         key_state = state.keys.get(key.label) if state else None
-        status = health.get(key.label).status if health and key.label in health else None
+        status = (
+            health.get(key.label).status if health and key.label in health else None
+        )
         if not status:
             status = "disabled" if key.disabled else "unknown"
-        last_used = _format_last_used(key_state.last_used if key_state else None, time_zone)
+        last_used = _format_last_used(
+            key_state.last_used if key_state else None, time_zone
+        )
         table.add_row(key.label, status, last_used, mask_key(key.api_key))
 
     console.print(table)
@@ -87,7 +99,14 @@ def render_rotation_dashboard(
     if reason:
         console.print(f"Reason: {reason}")
     console.print(f"Active key: {active_label}")
-    render_registry_table(registry, state, title="Key Dashboard", health=health, console=console, time_zone=time_zone)
+    render_registry_table(
+        registry,
+        state,
+        title="Key Dashboard",
+        health=health,
+        console=console,
+        time_zone=time_zone,
+    )
 
 
 def _rotation_summary(
@@ -111,15 +130,35 @@ def _summarize_rotate_reason(reason: Optional[str], rotated: bool) -> str:
     if reason:
         lowered = reason.lower()
         if "tie for best score" in lowered:
-            return "все ключи равны, поэтому перешли к следующему" if ru else "all keys tied, rotated to next"
+            return (
+                "все ключи равны, поэтому перешли к следующему"
+                if ru
+                else "all keys tied, rotated to next"
+            )
         if "ties for best" in lowered:
-            return "текущий ключ равен лучшему, поэтому оставили его" if ru else "current key tied for best, kept current"
+            return (
+                "текущий ключ равен лучшему, поэтому оставили его"
+                if ru
+                else "current key tied for best, kept current"
+            )
         if "higher remaining quota" in lowered:
-            return "у текущего ключа больше квоты" if ru else "current key has higher remaining quota"
+            return (
+                "у текущего ключа больше квоты"
+                if ru
+                else "current key has higher remaining quota"
+            )
         if "lower error rate" in lowered:
-            return "у текущего ключа меньше ошибок" if ru else "current key has lower error rate"
+            return (
+                "у текущего ключа меньше ошибок"
+                if ru
+                else "current key has lower error rate"
+            )
         if "better status" in lowered:
-            return "у текущего ключа лучше статус" if ru else "current key has better status"
+            return (
+                "у текущего ключа лучше статус"
+                if ru
+                else "current key has better status"
+            )
         if "already ranks best" in lowered:
             return "текущий ключ уже лучший" if ru else "current key already ranks best"
     if rotated:
@@ -152,7 +191,9 @@ def _format_used_limit(used: Optional[int], limit: Optional[int]) -> Optional[st
     return f"{used}/{limit}"
 
 
-def _percent_used(used: Optional[int], limit: Optional[int], remaining: Optional[int] = None) -> Optional[float]:
+def _percent_used(
+    used: Optional[int], limit: Optional[int], remaining: Optional[int] = None
+) -> Optional[float]:
     if used is None and limit is not None and remaining is not None:
         used = max(limit - remaining, 0)
     if used is None or limit is None or limit <= 0:
@@ -230,7 +271,6 @@ def render_health_dashboard(
 ) -> None:
     console = get_console(console)
     ok = warn = red = unknown = 0
-    best_label = None
     best_remaining = -1.0
     if dry_run:
         console.print("DRY RUN: upstream requests are simulated.")
@@ -254,7 +294,6 @@ def render_health_dashboard(
         remaining_sort = remaining if remaining is not None else -1.0
         if status == "healthy" and remaining_sort > best_remaining:
             best_remaining = remaining_sort
-            best_label = label
 
         rows.append(
             {
@@ -269,11 +308,20 @@ def render_health_dashboard(
                 "limit": info.limit if info else None,
                 "reset": info.reset_hint if info else None,
                 "error_rate": info.error_rate if info else 0.0,
-                "last_used": _format_last_used(state.keys.get(label).last_used if label in state.keys else None, time_zone),
+                "last_used": _format_last_used(
+                    state.keys.get(label).last_used if label in state.keys else None,
+                    time_zone,
+                ),
             }
         )
 
-    rows.sort(key=lambda r: (r["group"], -(r["remaining"] if r["remaining"] is not None else -1.0), r["label"]))
+    rows.sort(
+        key=lambda r: (
+            r["group"],
+            -(r["remaining"] if r["remaining"] is not None else -1.0),
+            r["label"],
+        )
+    )
 
     # Header panel removed per UX request.
 
@@ -305,12 +353,18 @@ def render_health_dashboard(
         primary_line = None
         if primary_summary_parts:
             primary_summary = " | ".join(primary_summary_parts)
-            primary_line = Text.assemble(("Weekly balance ", "bold"), (primary_summary, "white"))
+            primary_line = Text.assemble(
+                ("Weekly balance ", "bold"), (primary_summary, "white")
+            )
         last_used = row["last_used"]
-        last_used_line = Text.assemble(("Last Used ", "bold"), (last_used, "white")) if last_used else None
+        last_used_line = (
+            Text.assemble(("Last Used ", "bold"), (last_used, "white"))
+            if last_used
+            else None
+        )
         error_line = Text.assemble(
             ("Error Rate ", "bold"),
-            (f"{row['error_rate']*100:.1f}%", "white"),
+            (f"{row['error_rate'] * 100:.1f}%", "white"),
         )
         body_parts = [status_line, "\n", remaining_line]
         if primary_line:
@@ -320,7 +374,15 @@ def render_health_dashboard(
         body_parts.extend(["\n", error_line])
         body = Text.assemble(*body_parts)
         title = f"{row['icon']} {row['label']}"
-        console.print(Panel(body, title=title, title_align="left", border_style=row["color"], padding=(1, 2)))
+        console.print(
+            Panel(
+                body,
+                title=title,
+                title_align="left",
+                border_style=row["color"],
+                padding=(1, 2),
+            )
+        )
 
 
 def _limit_display(limit: LimitInfo, label: str) -> tuple[str, str]:
@@ -397,8 +459,11 @@ def render_accounts_health_dashboard(
     for account in accounts:
         key = (account.base_url, account.api_key)
         aliases.setdefault(key, []).append(account.label)
-    email_by_label = {account.label: account.email for account in accounts if account.email}
+    email_by_label = {
+        account.label: account.email for account in accounts if account.email
+    }
     key_to_auth_label: dict[tuple[str, str], str] = {}
+
     def usage_signature(info: Optional[HealthInfo]) -> Optional[tuple]:
         if info is None:
             return None
@@ -456,14 +521,26 @@ def render_accounts_health_dashboard(
         alias_labels = aliases.get((account.base_url, account.api_key), [])
         if len(alias_labels) > 1:
             if account.label.startswith("current:"):
-                preferred = [label for label in alias_labels if label != account.label and not label.startswith("current:")]
+                preferred = [
+                    label
+                    for label in alias_labels
+                    if label != account.label and not label.startswith("current:")
+                ]
                 alias_of = preferred[0] if preferred else None
             else:
-                has_current = any(label.startswith("current:") for label in alias_labels)
+                has_current = any(
+                    label.startswith("current:") for label in alias_labels
+                )
                 if not has_current:
-                    preferred = [label for label in alias_labels if label != account.label]
+                    preferred = [
+                        label for label in alias_labels if label != account.label
+                    ]
                     alias_of = preferred[0] if preferred else None
-        email = account.email or (info.email if info else None) or (email_by_label.get(alias_of) if alias_of else None)
+        email = (
+            account.email
+            or (info.email if info else None)
+            or (email_by_label.get(alias_of) if alias_of else None)
+        )
 
         matched_label = None
         if account.label.startswith("current:") or account.id == "current":
@@ -481,8 +558,11 @@ def render_accounts_health_dashboard(
                 "color": color,
                 "icon": icon,
                 "group": group,
-                "is_current": account.label.startswith("current:") or account.id == "current",
-                "provider": account.label.split("current:", 1)[1] if account.label.startswith("current:") else None,
+                "is_current": account.label.startswith("current:")
+                or account.id == "current",
+                "provider": account.label.split("current:", 1)[1]
+                if account.label.startswith("current:")
+                else None,
                 "matched_label": matched_label,
                 "remaining": info.remaining_percent if info else None,
                 "used": info.used if info else None,
@@ -491,7 +571,9 @@ def render_accounts_health_dashboard(
                 "reset": info.reset_hint if info else None,
                 "error_rate": info.error_rate if info else 0.0,
                 "last_used": _format_last_used(
-                    state.keys.get(account.label).last_used if account.label in state.keys else None,
+                    state.keys.get(account.label).last_used
+                    if account.label in state.keys
+                    else None,
                     time_zone,
                 ),
                 "source": account.source,
@@ -507,7 +589,11 @@ def render_accounts_health_dashboard(
         if row.get("matched_label") and row.get("is_current")
     }
     if hidden_labels:
-        rows = [row for row in rows if not (row["label"] in hidden_labels and not row["is_current"])]
+        rows = [
+            row
+            for row in rows
+            if not (row["label"] in hidden_labels and not row["is_current"])
+        ]
 
     def row_reset_seconds(row: dict) -> Optional[int]:
         seconds: list[int] = []
@@ -530,6 +616,7 @@ def render_accounts_health_dashboard(
         and row["remaining"] is not None
     ]
     if candidates:
+
         def candidate_key(r: dict) -> tuple:
             reset_sec = row_reset_seconds(r)
             return (
@@ -587,14 +674,24 @@ def render_accounts_health_dashboard(
             (f"{row['display_icon']} {row['display_status']}", row["display_color"]),
         )
         email_value = row.get("email")
-        email_line = Text.assemble(("Email ", "bold"), (str(email_value), "white")) if email_value else None
+        email_line = (
+            Text.assemble(("Email ", "bold"), (str(email_value), "white"))
+            if email_value
+            else None
+        )
         account_hint = None
         if row["is_current"] and row.get("matched_label"):
-            account_hint = Text.assemble(("Account ", "bold"), (str(row["matched_label"]), "dim"))
+            account_hint = Text.assemble(
+                ("Account ", "bold"), (str(row["matched_label"]), "dim")
+            )
         elif row["is_current"] and row.get("alias_of"):
-            account_hint = Text.assemble(("Account ", "bold"), (str(row["alias_of"]), "dim"))
+            account_hint = Text.assemble(
+                ("Account ", "bold"), (str(row["alias_of"]), "dim")
+            )
         elif row["is_current"] and row.get("provider"):
-            account_hint = Text.assemble(("Account ", "bold"), (str(row["provider"]), "dim"))
+            account_hint = Text.assemble(
+                ("Account ", "bold"), (str(row["provider"]), "dim")
+            )
         used_limit = _format_used_limit(row["used"], row["limit"])
         if used_limit:
             remaining_line = Text.assemble(
@@ -609,7 +706,9 @@ def render_accounts_health_dashboard(
                 (_format_percent(row["remaining"]), row["color"]),
             )
         primary_reset = _format_reset_hint(row["reset"])
-        primary_used_percent = _percent_used(row["used"], row["limit"], row["remaining_abs"])
+        primary_used_percent = _percent_used(
+            row["used"], row["limit"], row["remaining_abs"]
+        )
         primary_summary_parts = []
         if primary_used_percent is not None:
             primary_summary_parts.append(_format_percent(primary_used_percent))
@@ -622,10 +721,14 @@ def render_accounts_health_dashboard(
         last_used = row["last_used"]
         if last_used is not None and str(last_used).strip() == "-":
             last_used = None
-        last_used_line = Text.assemble(("Last Used ", "bold"), (last_used, "white")) if last_used else None
+        last_used_line = (
+            Text.assemble(("Last Used ", "bold"), (last_used, "white"))
+            if last_used
+            else None
+        )
         error_line = Text.assemble(
             ("Error Rate ", "bold"),
-            (f"{row['error_rate']*100:.1f}%", "white"),
+            (f"{row['error_rate'] * 100:.1f}%", "white"),
         )
         limits_lines: list[Text] = []
         selected_limits = _select_limits(row["limits"])
@@ -634,20 +737,38 @@ def render_accounts_health_dashboard(
             short_limit = selected_limits[-1]
             if short_limit is long_limit:
                 label, summary = _limit_display(long_limit, _limit_title(long_limit))
-                limits_lines.append(Text.assemble((label + " ", "bold"), (summary, "white")))
+                limits_lines.append(
+                    Text.assemble((label + " ", "bold"), (summary, "white"))
+                )
             else:
                 label, summary = _limit_display(long_limit, _limit_title(long_limit))
-                limits_lines.append(Text.assemble((label + " ", "bold"), (summary, "white")))
+                limits_lines.append(
+                    Text.assemble((label + " ", "bold"), (summary, "white"))
+                )
                 label, summary = _limit_display(short_limit, _limit_title(short_limit))
-                limits_lines.append(Text.assemble((label + " ", "bold"), (summary, "white")))
+                limits_lines.append(
+                    Text.assemble((label + " ", "bold"), (summary, "white"))
+                )
         action_line = None
         if row["status"] in {"blocked", "exhausted"}:
             if primary_reset != "-":
-                action_line = Text.assemble(("Action ", "bold"), (f"wait reset {primary_reset}", "red"))
+                action_line = Text.assemble(
+                    ("Action ", "bold"), (f"wait reset {primary_reset}", "red")
+                )
             else:
-                action_line = Text.assemble(("Action ", "bold"), ("switch to a green key", "red"))
-        alias_line = Text.assemble(("Alias of ", "bold"), (row["alias_of"], "dim")) if row["alias_of"] else None
-        source_line = Text.assemble(("Source ", "bold"), (row["source"], "dim")) if show_source else None
+                action_line = Text.assemble(
+                    ("Action ", "bold"), ("switch to a green key", "red")
+                )
+        alias_line = (
+            Text.assemble(("Alias of ", "bold"), (row["alias_of"], "dim"))
+            if row["alias_of"]
+            else None
+        )
+        source_line = (
+            Text.assemble(("Source ", "bold"), (row["source"], "dim"))
+            if show_source
+            else None
+        )
         has_week_limit = any(
             (limit.window_hours or 0) >= 24 * 5 for limit in selected_limits
         )
@@ -689,7 +810,15 @@ def render_accounts_health_dashboard(
         title = f"{row['display_icon']} {display_label}"
         if row["is_current"]:
             title = f"⭐ {row['display_icon']} {display_label}"
-        console.print(Panel(body, title=title, title_align="left", border_style=row["display_color"], padding=(1, 2)))
+        console.print(
+            Panel(
+                body,
+                title=title,
+                title_align="left",
+                border_style=row["display_color"],
+                padding=(1, 2),
+            )
+        )
         if row["is_current"] and not printed_current:
             console.print()
             printed_current = True

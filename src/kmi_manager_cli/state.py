@@ -108,7 +108,10 @@ def load_state(config: Config, registry: Registry) -> State:
                 if migrated:
                     changed = True
             except json.JSONDecodeError:
-                corrupt = path.with_suffix(path.suffix + f".corrupt.{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}")
+                corrupt = path.with_suffix(
+                    path.suffix
+                    + f".corrupt.{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+                )
                 path.rename(corrupt)
                 state = State()
                 changed = True

@@ -23,7 +23,13 @@ from kmi_manager_cli.errors import remediation_message
 from kmi_manager_cli.keys import Registry
 from kmi_manager_cli.logging import get_logger, log_event
 from kmi_manager_cli.health import fetch_usage, get_health_map
-from kmi_manager_cli.rotation import clear_blocked, is_blocked, mark_blocked, mark_exhausted, select_key_for_request
+from kmi_manager_cli.rotation import (
+    clear_blocked,
+    is_blocked,
+    mark_blocked,
+    mark_exhausted,
+    select_key_for_request,
+)
 from kmi_manager_cli.state import State, record_request, save_state
 from kmi_manager_cli.trace import append_trace, trace_now_str
 
@@ -102,7 +108,9 @@ def _filter_hop_by_hop_headers(headers: Iterable[tuple[str, str]]) -> dict[str, 
     return filtered
 
 
-def _build_upstream_headers(request_headers: Iterable[tuple[str, str]], api_key: str) -> dict[str, str]:
+def _build_upstream_headers(
+    request_headers: Iterable[tuple[str, str]], api_key: str
+) -> dict[str, str]:
     headers = _filter_hop_by_hop_headers(request_headers)
     headers.pop("host", None)
     headers.pop("content-length", None)
@@ -262,11 +270,15 @@ async def _maybe_refresh_health(ctx: ProxyContext) -> None:
     now = time.time()
     if ctx.health_cache_ts and (now - ctx.health_cache_ts) < interval:
         return
-    health = await asyncio.to_thread(get_health_map, ctx.config, ctx.registry, ctx.state)
+    health = await asyncio.to_thread(
+        get_health_map, ctx.config, ctx.registry, ctx.state
+    )
     ctx.health_cache = health
     ctx.health_cache_ts = now
     async with ctx.state_lock:
-        ctx.state.last_health_refresh = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ctx.state.last_health_refresh = datetime.now(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
     await ctx.state_writer.mark_dirty()
 
 
@@ -285,7 +297,10 @@ async def _maybe_recheck_blocked(ctx: ProxyContext) -> None:
             if not is_blocked(ctx.state, key.label):
                 continue
             candidates.append((key.label, key.api_key))
-            if ctx.config.blocklist_recheck_max > 0 and len(candidates) >= ctx.config.blocklist_recheck_max:
+            if (
+                ctx.config.blocklist_recheck_max > 0
+                and len(candidates) >= ctx.config.blocklist_recheck_max
+            ):
                 break
 
     if not candidates:
@@ -405,7 +420,9 @@ class TraceWriter:
             return
         if self.queue.full():
             self.dropped += 1
-            log_event(self.logger, "trace_queue_full", dropped=1, dropped_total=self.dropped)
+            log_event(
+                self.logger, "trace_queue_full", dropped=1, dropped_total=self.dropped
+            )
             return
         self.queue.put_nowait(entry)
 
@@ -539,7 +556,9 @@ def _authorize_request(request: Request, token: str) -> bool:
 def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
     limiter = RateLimiter(config.proxy_max_rps, config.proxy_max_rpm)
     logger = get_logger(config)
-    key_limiter = KeyedRateLimiter(config.proxy_max_rps_per_key, config.proxy_max_rpm_per_key)
+    key_limiter = KeyedRateLimiter(
+        config.proxy_max_rps_per_key, config.proxy_max_rpm_per_key
+    )
     state_lock = asyncio.Lock()
     state_writer = StateWriter(config=config, state=state, lock=state_lock)
     trace_writer = TraceWriter(config=config, logger=logger)
@@ -571,7 +590,10 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
     # Lifespan manages startup/shutdown for writers; avoid duplicate handlers.
     app = FastAPI(lifespan=lifespan)
 
-    @app.api_route(f"{config.proxy_base_path}/{{path:path}}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
+    @app.api_route(
+        f"{config.proxy_base_path}/{{path:path}}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    )
     async def proxy(path: str, request: Request) -> Response:
         start = time.perf_counter()
         if not _authorize_request(request, ctx.config.proxy_token):
@@ -600,14 +622,23 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
                 ctx.state.active_index = prev_active
                 ctx.state.rotation_index = prev_rotation
             await ctx.state_writer.mark_dirty()
-            log_event(logger, "proxy_key_rate_limited", endpoint=f"/{path}", key_label=key_label)
-            return JSONResponse({"error": "Per-key rate limit exceeded"}, status_code=429)
+            log_event(
+                logger,
+                "proxy_key_rate_limited",
+                endpoint=f"/{path}",
+                key_label=key_label,
+            )
+            return JSONResponse(
+                {"error": "Per-key rate limit exceeded"}, status_code=429
+            )
         await ctx.state_writer.mark_dirty()
 
         upstream_url = _build_upstream_url(ctx.config, path, request.url.query)
         headers = _build_upstream_headers(request.headers.items(), api_key)
         body = await request.body()
-        prompt_hint, prompt_head = _extract_prompt_meta(body, request.headers.get("content-type", ""))
+        prompt_hint, prompt_head = _extract_prompt_meta(
+            body, request.headers.get("content-type", "")
+        )
 
         if ctx.config.dry_run:
             async with ctx.state_lock:
@@ -665,7 +696,7 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
                     resp = await stream_ctx.__aenter__()
                 except httpx.HTTPError as exc:
                     if attempt < ctx.config.proxy_retry_max:
-                        delay = (ctx.config.proxy_retry_base_ms * (2 ** attempt)) / 1000.0
+                        delay = (ctx.config.proxy_retry_base_ms * (2**attempt)) / 1000.0
                         await asyncio.sleep(delay)
                         attempt += 1
                         continue
@@ -676,7 +707,7 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
                         await resp.aread()
                         await stream_ctx.__aexit__(None, None, None)
                         stream_ctx = None
-                        delay = (ctx.config.proxy_retry_base_ms * (2 ** attempt)) / 1000.0
+                        delay = (ctx.config.proxy_retry_base_ms * (2**attempt)) / 1000.0
                         await asyncio.sleep(delay)
                         attempt += 1
                         continue
@@ -716,7 +747,10 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
                 },
             )
             return JSONResponse(
-                {"error": "Upstream request failed", "hint": "Check connectivity or upstream status."},
+                {
+                    "error": "Upstream request failed",
+                    "hint": "Check connectivity or upstream status.",
+                },
                 status_code=502,
             )
         content: Optional[bytes] = None
@@ -724,7 +758,9 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
         payment_required = False
         if resp.status_code >= 400:
             content = await resp.aread()
-            error_hint = _extract_error_hint(content, resp.headers.get("content-type", ""))
+            error_hint = _extract_error_hint(
+                content, resp.headers.get("content-type", "")
+            )
             payment_required = _looks_like_payment_error(resp.status_code, error_hint)
         async with ctx.state_lock:
             record_request(ctx.state, key_label, resp.status_code)
@@ -773,7 +809,9 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
                 "endpoint": f"/{path}",
                 "status": resp.status_code,
                 "latency_ms": latency_ms,
-                "error_code": "payment_required" if payment_required else (resp.status_code if resp.status_code >= 400 else None),
+                "error_code": "payment_required"
+                if payment_required
+                else (resp.status_code if resp.status_code >= 400 else None),
                 "rotation_index": ctx.state.rotation_index,
             },
         )
@@ -781,7 +819,9 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
         if resp.is_stream_consumed:
             content = resp.content if content is None else content
             await _close_stream(stream_ctx, client)
-            return Response(content=content, status_code=resp.status_code, headers=response_headers)
+            return Response(
+                content=content, status_code=resp.status_code, headers=response_headers
+            )
         background = BackgroundTask(_close_stream, stream_ctx, client)
         return StreamingResponse(
             resp.aiter_raw(),
@@ -798,13 +838,21 @@ def run_proxy(config: Config, registry: Registry, state: State) -> None:
 
     host, port = parse_listen(config.proxy_listen)
     if not _is_local_host(host) and not config.proxy_allow_remote:
-        raise ValueError("Remote proxy binding is disabled. Set KMI_PROXY_ALLOW_REMOTE=1 to override.")
-    if not _is_local_host(host) and config.proxy_require_tls and not config.proxy_tls_terminated:
+        raise ValueError(
+            "Remote proxy binding is disabled. Set KMI_PROXY_ALLOW_REMOTE=1 to override."
+        )
+    if (
+        not _is_local_host(host)
+        and config.proxy_require_tls
+        and not config.proxy_tls_terminated
+    ):
         raise ValueError(
             "Remote proxy binding requires TLS termination. "
             "Set KMI_PROXY_TLS_TERMINATED=1 when behind TLS, or set KMI_PROXY_REQUIRE_TLS=0 to override."
         )
     if not _is_local_host(host) and not config.proxy_token:
-        raise ValueError("Remote proxy binding requires KMI_PROXY_TOKEN for authentication.")
+        raise ValueError(
+            "Remote proxy binding requires KMI_PROXY_TOKEN for authentication."
+        )
     app = create_app(config, registry, state)
     uvicorn.run(app, host=host, port=port, lifespan="on")

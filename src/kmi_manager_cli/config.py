@@ -143,7 +143,6 @@ class Config:
     fail_open_on_empty_cache: bool = DEFAULT_KMI_FAIL_OPEN_ON_EMPTY_CACHE
 
 
-
 def _resolve_auths_dir() -> Path:
     env_val = os.getenv("KMI_AUTHS_DIR")
     if env_val:
@@ -166,9 +165,15 @@ def load_config(env_path: Optional[Path] = None) -> Config:
         load_dotenv()
 
     auths_dir = _resolve_auths_dir()
-    proxy_listen = _require_non_empty("KMI_PROXY_LISTEN", os.getenv("KMI_PROXY_LISTEN", DEFAULT_KMI_PROXY_LISTEN))
-    proxy_base_path = _normalize_base_path(os.getenv("KMI_PROXY_BASE_PATH", DEFAULT_KMI_PROXY_BASE_PATH))
-    upstream_allowlist = _parse_allowlist(os.getenv("KMI_UPSTREAM_ALLOWLIST", DEFAULT_KMI_UPSTREAM_ALLOWLIST))
+    proxy_listen = _require_non_empty(
+        "KMI_PROXY_LISTEN", os.getenv("KMI_PROXY_LISTEN", DEFAULT_KMI_PROXY_LISTEN)
+    )
+    proxy_base_path = _normalize_base_path(
+        os.getenv("KMI_PROXY_BASE_PATH", DEFAULT_KMI_PROXY_BASE_PATH)
+    )
+    upstream_allowlist = _parse_allowlist(
+        os.getenv("KMI_UPSTREAM_ALLOWLIST", DEFAULT_KMI_UPSTREAM_ALLOWLIST)
+    )
     upstream_base_url = validate_base_url(
         "KMI_UPSTREAM_BASE_URL",
         os.getenv("KMI_UPSTREAM_BASE_URL", DEFAULT_KMI_UPSTREAM_BASE_URL),
@@ -176,27 +181,55 @@ def load_config(env_path: Optional[Path] = None) -> Config:
     )
     state_dir = Path(os.getenv("KMI_STATE_DIR", DEFAULT_KMI_STATE_DIR)).expanduser()
     dry_run = _parse_bool(os.getenv("KMI_DRY_RUN"), DEFAULT_KMI_DRY_RUN)
-    auto_rotate_allowed = _parse_bool(os.getenv("KMI_AUTO_ROTATE_ALLOWED"), DEFAULT_KMI_AUTO_ROTATE_ALLOWED)
-    auto_rotate_e2e = _parse_bool(os.getenv("KMI_AUTO_ROTATE_E2E"), DEFAULT_KMI_AUTO_ROTATE_E2E)
-    cooldown = int(os.getenv("KMI_ROTATION_COOLDOWN_SECONDS", str(DEFAULT_KMI_ROTATION_COOLDOWN_SECONDS)))
-    proxy_allow_remote = _parse_bool(os.getenv("KMI_PROXY_ALLOW_REMOTE"), DEFAULT_KMI_PROXY_ALLOW_REMOTE)
+    auto_rotate_allowed = _parse_bool(
+        os.getenv("KMI_AUTO_ROTATE_ALLOWED"), DEFAULT_KMI_AUTO_ROTATE_ALLOWED
+    )
+    auto_rotate_e2e = _parse_bool(
+        os.getenv("KMI_AUTO_ROTATE_E2E"), DEFAULT_KMI_AUTO_ROTATE_E2E
+    )
+    cooldown = int(
+        os.getenv(
+            "KMI_ROTATION_COOLDOWN_SECONDS", str(DEFAULT_KMI_ROTATION_COOLDOWN_SECONDS)
+        )
+    )
+    proxy_allow_remote = _parse_bool(
+        os.getenv("KMI_PROXY_ALLOW_REMOTE"), DEFAULT_KMI_PROXY_ALLOW_REMOTE
+    )
     proxy_token = os.getenv("KMI_PROXY_TOKEN", DEFAULT_KMI_PROXY_TOKEN)
-    proxy_require_tls = _parse_bool(os.getenv("KMI_PROXY_REQUIRE_TLS"), DEFAULT_KMI_PROXY_REQUIRE_TLS)
-    proxy_tls_terminated = _parse_bool(os.getenv("KMI_PROXY_TLS_TERMINATED"), DEFAULT_KMI_PROXY_TLS_TERMINATED)
+    proxy_require_tls = _parse_bool(
+        os.getenv("KMI_PROXY_REQUIRE_TLS"), DEFAULT_KMI_PROXY_REQUIRE_TLS
+    )
+    proxy_tls_terminated = _parse_bool(
+        os.getenv("KMI_PROXY_TLS_TERMINATED"), DEFAULT_KMI_PROXY_TLS_TERMINATED
+    )
     proxy_max_rps = int(os.getenv("KMI_PROXY_MAX_RPS", str(DEFAULT_KMI_PROXY_MAX_RPS)))
     proxy_max_rpm = int(os.getenv("KMI_PROXY_MAX_RPM", str(DEFAULT_KMI_PROXY_MAX_RPM)))
-    proxy_max_rps_per_key = int(os.getenv("KMI_PROXY_MAX_RPS_PER_KEY", str(DEFAULT_KMI_PROXY_MAX_RPS_PER_KEY)))
-    proxy_max_rpm_per_key = int(os.getenv("KMI_PROXY_MAX_RPM_PER_KEY", str(DEFAULT_KMI_PROXY_MAX_RPM_PER_KEY)))
-    proxy_retry_max = int(os.getenv("KMI_PROXY_RETRY_MAX", str(DEFAULT_KMI_PROXY_RETRY_MAX)))
-    proxy_retry_base_ms = int(os.getenv("KMI_PROXY_RETRY_BASE_MS", str(DEFAULT_KMI_PROXY_RETRY_BASE_MS)))
+    proxy_max_rps_per_key = int(
+        os.getenv("KMI_PROXY_MAX_RPS_PER_KEY", str(DEFAULT_KMI_PROXY_MAX_RPS_PER_KEY))
+    )
+    proxy_max_rpm_per_key = int(
+        os.getenv("KMI_PROXY_MAX_RPM_PER_KEY", str(DEFAULT_KMI_PROXY_MAX_RPM_PER_KEY))
+    )
+    proxy_retry_max = int(
+        os.getenv("KMI_PROXY_RETRY_MAX", str(DEFAULT_KMI_PROXY_RETRY_MAX))
+    )
+    proxy_retry_base_ms = int(
+        os.getenv("KMI_PROXY_RETRY_BASE_MS", str(DEFAULT_KMI_PROXY_RETRY_BASE_MS))
+    )
     trace_max_mb = int(os.getenv("KMI_TRACE_MAX_MB", str(DEFAULT_KMI_TRACE_MAX_MB)))
-    trace_max_backups = int(os.getenv("KMI_TRACE_BACKUPS", str(DEFAULT_KMI_TRACE_BACKUPS)))
+    trace_max_backups = int(
+        os.getenv("KMI_TRACE_BACKUPS", str(DEFAULT_KMI_TRACE_BACKUPS))
+    )
     log_max_mb = int(os.getenv("KMI_LOG_MAX_MB", str(DEFAULT_KMI_LOG_MAX_MB)))
     log_max_backups = int(os.getenv("KMI_LOG_BACKUPS", str(DEFAULT_KMI_LOG_BACKUPS)))
     write_config = _parse_bool(os.getenv("KMI_WRITE_CONFIG"), DEFAULT_KMI_WRITE_CONFIG)
-    rotate_on_tie = _parse_bool(os.getenv("KMI_ROTATE_ON_TIE"), DEFAULT_KMI_ROTATE_ON_TIE)
+    rotate_on_tie = _parse_bool(
+        os.getenv("KMI_ROTATE_ON_TIE"), DEFAULT_KMI_ROTATE_ON_TIE
+    )
     time_zone = os.getenv("KMI_TIMEZONE", DEFAULT_KMI_TIMEZONE)
-    enforce_file_perms = _parse_bool(os.getenv("KMI_ENFORCE_FILE_PERMS"), DEFAULT_KMI_ENFORCE_FILE_PERMS)
+    enforce_file_perms = _parse_bool(
+        os.getenv("KMI_ENFORCE_FILE_PERMS"), DEFAULT_KMI_ENFORCE_FILE_PERMS
+    )
     payment_block_seconds = int(
         os.getenv("KMI_PAYMENT_BLOCK_SECONDS", str(DEFAULT_KMI_PAYMENT_BLOCK_SECONDS))
     )
@@ -208,7 +241,9 @@ def load_config(env_path: Optional[Path] = None) -> Config:
         os.getenv("KMI_USAGE_CACHE_SECONDS", str(DEFAULT_KMI_USAGE_CACHE_SECONDS))
     )
     blocklist_recheck_seconds = int(
-        os.getenv("KMI_BLOCKLIST_RECHECK_SECONDS", str(DEFAULT_KMI_BLOCKLIST_RECHECK_SECONDS))
+        os.getenv(
+            "KMI_BLOCKLIST_RECHECK_SECONDS", str(DEFAULT_KMI_BLOCKLIST_RECHECK_SECONDS)
+        )
     )
     blocklist_recheck_max = int(
         os.getenv("KMI_BLOCKLIST_RECHECK_MAX", str(DEFAULT_KMI_BLOCKLIST_RECHECK_MAX))

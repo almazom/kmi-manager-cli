@@ -111,7 +111,9 @@ def _extract_email_from_payload(payload: dict) -> Optional[str]:
             email = _looks_like_email(data.get(key))
             if email:
                 return email
-    account = payload.get("account") if isinstance(payload.get("account"), dict) else None
+    account = (
+        payload.get("account") if isinstance(payload.get("account"), dict) else None
+    )
     if account:
         for key in ("email", "account_email", "user_email"):
             email = _looks_like_email(account.get(key))
@@ -179,7 +181,9 @@ def _parse_limits(payload: dict) -> list[LimitInfo]:
     return limits
 
 
-def _extract_usage_summary(payload: dict) -> tuple[Optional[int], Optional[int], Optional[int], Optional[str]]:
+def _extract_usage_summary(
+    payload: dict,
+) -> tuple[Optional[int], Optional[int], Optional[int], Optional[str]]:
     usage = payload.get("usage") if isinstance(payload, dict) else None
     limits = payload.get("limits") if isinstance(payload, dict) else None
 
@@ -195,10 +199,14 @@ def _extract_usage_summary(payload: dict) -> tuple[Optional[int], Optional[int],
     if isinstance(limits, list) and limits:
         first = limits[0] if isinstance(limits[0], dict) else None
         if first:
-            detail = first.get("detail") if isinstance(first.get("detail"), dict) else first
+            detail = (
+                first.get("detail") if isinstance(first.get("detail"), dict) else first
+            )
             used = used if used is not None else _to_int(detail.get("used"))
             limit = limit if limit is not None else _to_int(detail.get("limit"))
-            remaining = remaining if remaining is not None else _to_int(detail.get("remaining"))
+            remaining = (
+                remaining if remaining is not None else _to_int(detail.get("remaining"))
+            )
             if reset_hint is None:
                 reset_hint = _extract_reset_hint(detail)
 
@@ -224,7 +232,9 @@ def fetch_usage(
         )
     url = base_url.rstrip("/") + "/usages"
     try:
-        resp = httpx.get(url, headers={"Authorization": f"Bearer {api_key}"}, timeout=10.0)
+        resp = httpx.get(
+            url, headers={"Authorization": f"Bearer {api_key}"}, timeout=10.0
+        )
         resp.raise_for_status()
         payload = resp.json() if resp.content else {}
     except Exception as exc:
@@ -246,14 +256,21 @@ def fetch_usage(
     if remaining_percent is None and used is not None and limit is not None:
         remaining = remaining if remaining is not None else max(limit - used, 0)
         remaining_percent = round((remaining / limit) * 100, 2) if limit else None
-    if remaining_percent is not None and used is not None and limit is not None and limit > 0:
+    if (
+        remaining_percent is not None
+        and used is not None
+        and limit is not None
+        and limit > 0
+    ):
         computed = round(((limit - used) / limit) * 100, 2)
         if abs(remaining_percent - computed) > 1.0:
             remaining_percent = computed
     if remaining_percent is None and limits:
         candidate = max(
             (limit for limit in limits if limit.limit),
-            key=lambda limit: limit.window_hours if limit.window_hours is not None else -1,
+            key=lambda limit: limit.window_hours
+            if limit.window_hours is not None
+            else -1,
             default=None,
         )
         if candidate and candidate.limit:
@@ -262,7 +279,9 @@ def fetch_usage(
             remaining = remaining if remaining is not None else candidate.remaining
             if used is not None and limit is not None:
                 remaining = remaining if remaining is not None else max(limit - used, 0)
-                remaining_percent = round((remaining / limit) * 100, 2) if limit else None
+                remaining_percent = (
+                    round((remaining / limit) * 100, 2) if limit else None
+                )
     return Usage(
         remaining_percent=remaining_percent,
         used=used,
@@ -275,7 +294,9 @@ def fetch_usage(
     )
 
 
-def score_key(usage: Optional[Usage], key_state: KeyState, exhausted: bool, blocked: bool = False) -> str:
+def score_key(
+    usage: Optional[Usage], key_state: KeyState, exhausted: bool, blocked: bool = False
+) -> str:
     if blocked:
         return "blocked"
     if exhausted:
@@ -300,7 +321,9 @@ def score_key(usage: Optional[Usage], key_state: KeyState, exhausted: bool, bloc
     return "healthy"
 
 
-def get_health_map(config: Config, registry: Registry, state: State) -> dict[str, HealthInfo]:
+def get_health_map(
+    config: Config, registry: Registry, state: State
+) -> dict[str, HealthInfo]:
     health: dict[str, HealthInfo] = {}
     logger = get_logger(config)
     for key in registry.keys:
@@ -313,7 +336,9 @@ def get_health_map(config: Config, registry: Registry, state: State) -> dict[str
         )
         key_state = state.keys.get(key.label, KeyState())
         total = max(key_state.request_count, 1)
-        error_rate = (key_state.error_403 + key_state.error_429 + key_state.error_5xx) / total
+        error_rate = (
+            key_state.error_403 + key_state.error_429 + key_state.error_5xx
+        ) / total
         blocked = is_blocked(state, key.label)
         status = score_key(usage, key_state, is_exhausted(state, key.label), blocked)
         health[key.label] = HealthInfo(
@@ -331,7 +356,9 @@ def get_health_map(config: Config, registry: Registry, state: State) -> dict[str
     return health
 
 
-def get_accounts_health(config: Config, accounts: list[Account], state: State, force_real: bool = False) -> dict[str, HealthInfo]:
+def get_accounts_health(
+    config: Config, accounts: list[Account], state: State, force_real: bool = False
+) -> dict[str, HealthInfo]:
     health: dict[str, HealthInfo] = {}
     logger = get_logger(config)
     for account in accounts:
@@ -344,9 +371,13 @@ def get_accounts_health(config: Config, accounts: list[Account], state: State, f
         )
         key_state = state.keys.get(account.label, KeyState())
         total = max(key_state.request_count, 1)
-        error_rate = (key_state.error_403 + key_state.error_429 + key_state.error_5xx) / total
+        error_rate = (
+            key_state.error_403 + key_state.error_429 + key_state.error_5xx
+        ) / total
         blocked = is_blocked(state, account.label)
-        status = score_key(usage, key_state, is_exhausted(state, account.label), blocked)
+        status = score_key(
+            usage, key_state, is_exhausted(state, account.label), blocked
+        )
         health[account.id] = HealthInfo(
             status=status,
             remaining_percent=usage.remaining_percent if usage else None,

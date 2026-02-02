@@ -56,7 +56,9 @@ def _normalize_base_url(
     try:
         return validate_base_url("base_url", candidate, allowlist)
     except ValueError as exc:
-        logging.getLogger("kmi").warning("Skipping auth %s due to invalid base_url: %s", source_path, exc)
+        logging.getLogger("kmi").warning(
+            "Skipping auth %s due to invalid base_url: %s", source_path, exc
+        )
         return None
 
 
@@ -74,17 +76,23 @@ def _providers_from_config(config: dict) -> dict[str, dict[str, str]]:
     if isinstance(root, dict):
         for name, values in root.items():
             if isinstance(values, dict):
-                providers[str(name)] = {str(k): str(v) for k, v in values.items() if v is not None}
+                providers[str(name)] = {
+                    str(k): str(v) for k, v in values.items() if v is not None
+                }
     for section, values in config.items() if isinstance(config, dict) else []:
         if not isinstance(section, str) or not section.startswith("providers."):
             continue
         name = _normalize_name(section.split(".", 1)[1])
         if isinstance(values, dict):
-            providers[name] = {str(k): str(v) for k, v in values.items() if v is not None}
+            providers[name] = {
+                str(k): str(v) for k, v in values.items() if v is not None
+            }
     return providers
 
 
-def _select_provider(providers: dict[str, dict[str, str]]) -> Optional[tuple[str, dict[str, str]]]:
+def _select_provider(
+    providers: dict[str, dict[str, str]],
+) -> Optional[tuple[str, dict[str, str]]]:
     for name in _PROVIDER_ORDER:
         if name in providers and providers[name].get("api_key"):
             return name, providers[name]
@@ -95,7 +103,14 @@ def _select_provider(providers: dict[str, dict[str, str]]) -> Optional[tuple[str
 
 
 def _extract_email_from_values(values: dict[str, str]) -> Optional[str]:
-    for key in ("email", "account_email", "user_email", "login_email", "user", "account"):
+    for key in (
+        "email",
+        "account_email",
+        "user_email",
+        "login_email",
+        "user",
+        "account",
+    ):
         value = values.get(key)
         if value and _EMAIL_RE.search(str(value)):
             return _EMAIL_RE.search(str(value)).group(0)
@@ -111,7 +126,9 @@ def _extract_email_from_config(config: dict) -> Optional[str]:
         current = stack.pop()
         if not isinstance(current, dict):
             continue
-        values = {k: str(v) for k, v in current.items() if isinstance(v, (str, int, float))}
+        values = {
+            k: str(v) for k, v in current.items() if isinstance(v, (str, int, float))
+        }
         email = _extract_email_from_values(values)
         if email:
             return email
@@ -128,7 +145,9 @@ def _extract_email_from_text(text: str) -> Optional[str]:
     return None
 
 
-def _account_from_toml(path: Path, default_base_url: str, allowlist: tuple[str, ...]) -> Optional[Account]:
+def _account_from_toml(
+    path: Path, default_base_url: str, allowlist: tuple[str, ...]
+) -> Optional[Account]:
     config = _parse_toml(path)
     providers = _providers_from_config(config)
     selected = _select_provider(providers)
@@ -138,7 +157,9 @@ def _account_from_toml(path: Path, default_base_url: str, allowlist: tuple[str, 
     api_key = values.get("api_key")
     if not api_key:
         return None
-    base_url = _normalize_base_url(values.get("base_url"), default_base_url, path, allowlist)
+    base_url = _normalize_base_url(
+        values.get("base_url"), default_base_url, path, allowlist
+    )
     if not base_url:
         return None
     label = _normalize_label(path.stem)
@@ -146,7 +167,9 @@ def _account_from_toml(path: Path, default_base_url: str, allowlist: tuple[str, 
     if email is None:
         email = _extract_email_from_config(config)
     if email is None:
-        email = _extract_email_from_text(path.name) or _extract_email_from_text(path.read_text(errors="ignore"))
+        email = _extract_email_from_text(path.name) or _extract_email_from_text(
+            path.read_text(errors="ignore")
+        )
     return Account(
         id=f"auth:{path.name}",
         label=label,
@@ -157,13 +180,17 @@ def _account_from_toml(path: Path, default_base_url: str, allowlist: tuple[str, 
     )
 
 
-def _account_from_env(path: Path, default_base_url: str, allowlist: tuple[str, ...]) -> Optional[Account]:
+def _account_from_env(
+    path: Path, default_base_url: str, allowlist: tuple[str, ...]
+) -> Optional[Account]:
     data = dotenv_values(path)
     api_key = data.get("KMI_API_KEY")
     if not api_key:
         return None
     label = _normalize_label(str(data.get("KMI_KEY_LABEL") or path.stem))
-    base_url = _normalize_base_url(data.get("KMI_UPSTREAM_BASE_URL"), default_base_url, path, allowlist)
+    base_url = _normalize_base_url(
+        data.get("KMI_UPSTREAM_BASE_URL"), default_base_url, path, allowlist
+    )
     if not base_url:
         return None
     email = None
@@ -173,7 +200,9 @@ def _account_from_env(path: Path, default_base_url: str, allowlist: tuple[str, .
             email = _EMAIL_RE.search(str(value)).group(0)
             break
     if email is None:
-        email = _extract_email_from_values({k: str(v) for k, v in data.items() if v is not None})
+        email = _extract_email_from_values(
+            {k: str(v) for k, v in data.items() if v is not None}
+        )
     if email is None:
         email = _extract_email_from_text(path.name)
     return Account(
@@ -186,7 +215,9 @@ def _account_from_env(path: Path, default_base_url: str, allowlist: tuple[str, .
     )
 
 
-def _account_from_json(path: Path, default_base_url: str, allowlist: tuple[str, ...]) -> Optional[Account]:
+def _account_from_json(
+    path: Path, default_base_url: str, allowlist: tuple[str, ...]
+) -> Optional[Account]:
     try:
         payload = json.loads(path.read_text(errors="ignore"))
     except json.JSONDecodeError:
@@ -205,13 +236,17 @@ def _account_from_json(path: Path, default_base_url: str, allowlist: tuple[str, 
     api_key = values.get("api_key")
     if not api_key:
         return None
-    base_url = _normalize_base_url(values.get("base_url"), default_base_url, path, allowlist)
+    base_url = _normalize_base_url(
+        values.get("base_url"), default_base_url, path, allowlist
+    )
     if not base_url:
         return None
     label = _normalize_label(path.stem)
     email = _extract_email_from_values(values)
     if email is None and isinstance(payload, dict):
-        root_values = {k: str(v) for k, v in payload.items() if isinstance(v, (str, int, float))}
+        root_values = {
+            k: str(v) for k, v in payload.items() if isinstance(v, (str, int, float))
+        }
         email = _extract_email_from_values(root_values)
     if email is None:
         email = _extract_email_from_text(path.name)
@@ -247,7 +282,9 @@ def load_accounts_from_auths_dir(
             account = _account_from_env(path, default_base_url, allowlist)
         elif path.suffix.lower() == ".toml":
             account = _account_from_toml(path, default_base_url, allowlist)
-        elif path.suffix.lower() in {".json", ".bak"} or path.name.endswith(".json.bak"):
+        elif path.suffix.lower() in {".json", ".bak"} or path.name.endswith(
+            ".json.bak"
+        ):
             account = _account_from_json(path, default_base_url, allowlist)
         else:
             account = None
@@ -256,7 +293,9 @@ def load_accounts_from_auths_dir(
     return accounts
 
 
-def load_current_account(config_path: Path, allowlist: tuple[str, ...] = ()) -> Optional[Account]:
+def load_current_account(
+    config_path: Path, allowlist: tuple[str, ...] = ()
+) -> Optional[Account]:
     if not config_path.exists():
         return None
     config = _parse_toml(config_path)

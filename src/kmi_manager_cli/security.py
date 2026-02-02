@@ -18,7 +18,9 @@ def is_insecure_permissions(path: Path) -> bool:
 def warn_if_insecure(path: Path, logger, label: str) -> None:
     if is_insecure_permissions(path):
         try:
-            logger.warning("insecure_permissions", extra={"path": str(path), "label": label})
+            logger.warning(
+                "insecure_permissions", extra={"path": str(path), "label": label}
+            )
         except Exception:
             logger.warning("insecure_permissions: %s (%s)", path, label)
 
@@ -27,7 +29,9 @@ def _secure_mode(is_dir: bool) -> int:
     return 0o700 if is_dir else 0o600
 
 
-def ensure_secure_permissions(path: Path, logger, label: str, *, is_dir: bool, enforce: bool) -> None:
+def ensure_secure_permissions(
+    path: Path, logger, label: str, *, is_dir: bool, enforce: bool
+) -> None:
     if not enforce or os.name == "nt":
         return
     if not path.exists():
@@ -41,7 +45,10 @@ def ensure_secure_permissions(path: Path, logger, label: str, *, is_dir: bool, e
     desired = _secure_mode(is_dir)
     try:
         os.chmod(path, desired)
-        logger.info("permissions_hardened", extra={"path": str(path), "label": label, "mode": oct(desired)})
+        logger.info(
+            "permissions_hardened",
+            extra={"path": str(path), "label": label, "mode": oct(desired)},
+        )
     except Exception as exc:
         try:
             logger.warning(

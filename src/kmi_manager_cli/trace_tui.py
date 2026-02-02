@@ -11,7 +11,12 @@ from rich.panel import Panel
 from rich.text import Text
 
 from kmi_manager_cli.config import Config
-from kmi_manager_cli.trace import compute_confidence, compute_distribution, load_trace_entries, trace_path
+from kmi_manager_cli.trace import (
+    compute_confidence,
+    compute_distribution,
+    load_trace_entries,
+    trace_path,
+)
 from kmi_manager_cli.ui import get_console
 
 
@@ -30,24 +35,26 @@ def _format_ts(value: str) -> str:
 
 class HighlightTracker:
     """Tracks newly appeared entries and their highlight duration."""
-    
+
     HIGHLIGHT_SECONDS: ClassVar[float] = 5.0
-    
+
     def __init__(self) -> None:
         self._seen_ids: set[str] = set()
         self._highlighted_id: str | None = None
         self._highlight_until: float = 0.0
-    
+
     def update(self, entries: list[dict]) -> str | None:
         """Update tracker with new entries and return the ID to highlight."""
         current_time = time.time()
-        
+
         # Collect IDs from current entries (most recent first in reversed order)
-        current_ids = {str(e.get("request_id", "")) for e in entries if e.get("request_id")}
-        
+        current_ids = {
+            str(e.get("request_id", "")) for e in entries if e.get("request_id")
+        }
+
         # Find new IDs that we haven't seen before
         new_ids = current_ids - self._seen_ids
-        
+
         # If there are new entries, highlight the most recent one
         if new_ids and entries:
             # Get the most recent entry (last in the list since we display reversed)
@@ -56,14 +63,14 @@ class HighlightTracker:
             if new_id in new_ids:
                 self._highlighted_id = new_id
                 self._highlight_until = current_time + self.HIGHLIGHT_SECONDS
-        
+
         # Clear highlight if expired
         if current_time > self._highlight_until:
             self._highlighted_id = None
-        
+
         # Update seen IDs
         self._seen_ids = current_ids
-        
+
         return self._highlighted_id
 
 
@@ -75,7 +82,9 @@ def _build_view(
 ) -> Panel:
     confidence = compute_confidence(entries)
     counts, total = compute_distribution(entries)
-    distribution = ", ".join(f"{label}:{count}" for label, count in sorted(counts.items()))
+    distribution = ", ".join(
+        f"{label}:{count}" for label, count in sorted(counts.items())
+    )
     if not distribution:
         distribution = "no data"
     warning = ""
@@ -86,7 +95,7 @@ def _build_view(
     elif confidence < 95:
         warning = "WARNING confidence < 95%"
     title = f"KMI TRACE | window={window} | confidence={confidence}%"
-    
+
     # Build lines as Text objects to support styling
     text_lines: list[Text] = []
     for entry in reversed(entries[-20:]):
@@ -106,7 +115,9 @@ def _build_view(
         status = str(entry.get("status", ""))
         head = str(entry.get("prompt_head", "")).strip()
         hint = str(entry.get("prompt_hint", "")).strip()
-        line = f"{ts_short} | {req_id} | {method} | {key} | {display_endpoint} | {status}"
+        line = (
+            f"{ts_short} | {req_id} | {method} | {key} | {display_endpoint} | {status}"
+        )
         hint_tail = hint
         if head and hint and hint.lower().startswith(head.lower()):
             hint_tail = hint[len(head) :].lstrip()
@@ -114,33 +125,35 @@ def _build_view(
             line = f"{line} | {head}"
         if hint_tail:
             line = f"{line} | {hint_tail}"
-        
+
         # Apply green color if this is the highlighted entry
         entry_id = str(entry.get("request_id", ""))
         if entry_id == highlight_id:
             text_lines.append(Text(line, style="green"))
         else:
             text_lines.append(Text(line))
-    
+
     if text_lines:
         body = Text("\n").join(text_lines)
     else:
         body = Text("no entries")
-    
+
     footer = f"keys: {distribution}" + (f" | {warning}" if warning else "")
     group = Group(body, Align.left(Text(footer)))
     return Panel(group, title=title, expand=True)
 
 
-def run_trace_tui(config: Config, window: int = 200, refresh_seconds: float = 1.0) -> None:
+def run_trace_tui(
+    config: Config, window: int = 200, refresh_seconds: float = 1.0
+) -> None:
     console = get_console()
     path = trace_path(config)
     if config.dry_run:
         console.print("DRY RUN: upstream requests are simulated.")
     console.print(f"Tracing {path} (Ctrl+C to exit)")
-    
+
     tracker = HighlightTracker()
-    
+
     try:
         with Live(
             _build_view([], window, upstream_base_url=config.upstream_base_url),

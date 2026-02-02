@@ -23,7 +23,11 @@ class JsonFormatter(logging.Formatter):
             "level": record.levelname,
             "message": record.getMessage(),
         }
-        extras = {k: v for k, v in record.__dict__.items() if k not in logging.LogRecord("", 0, "", 0, "", (), None).__dict__}
+        extras = {
+            k: v
+            for k, v in record.__dict__.items()
+            if k not in logging.LogRecord("", 0, "", 0, "", (), None).__dict__
+        }
         if extras:
             payload.update(extras)
         return json.dumps(payload, ensure_ascii=True)
