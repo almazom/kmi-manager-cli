@@ -157,10 +157,12 @@ def _resolve_auths_dir() -> Path:
 
 
 def load_config(env_path: Optional[Path] = None) -> Config:
+    explicit_env = env_path is not None or bool(os.getenv("KMI_ENV_PATH"))
     if env_path is None:
         env_path = _resolve_env_path()
     if env_path is not None:
-        load_dotenv(env_path)
+        # Explicit env files (argument or KMI_ENV_PATH) should override existing env vars.
+        load_dotenv(env_path, override=explicit_env)
     else:
         load_dotenv()
 

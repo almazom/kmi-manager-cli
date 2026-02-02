@@ -112,10 +112,9 @@ def _build_upstream_headers(
     request_headers: Iterable[tuple[str, str]], api_key: str
 ) -> dict[str, str]:
     headers = _filter_hop_by_hop_headers(request_headers)
-    headers.pop("host", None)
-    headers.pop("content-length", None)
-    headers.pop("authorization", None)
-    headers.pop("x-kmi-proxy-token", None)
+    for key in list(headers):
+        if key.lower() in {"host", "content-length", "authorization", "x-kmi-proxy-token"}:
+            headers.pop(key, None)
     headers["authorization"] = f"Bearer {api_key}"
     return headers
 
