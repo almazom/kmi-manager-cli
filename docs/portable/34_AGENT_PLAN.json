@@ -1,0 +1,115 @@
+{
+  "version": "1.0",
+  "goal": "Route all kimi CLI requests through local proxy with trace/log visibility, no sudo.",
+  "variables": {
+    "REPO_DIR": "$HOME/TOOLS/kimi_manager_cli",
+    "PROXY_PORT": "54244",
+    "TIMEZONE": "Europe/Moscow"
+  },
+  "steps": [
+    {
+      "id": "install",
+      "sudo": false,
+      "cwd": "$REPO_DIR",
+      "commands": [
+        "pip install -e .",
+        "kmi --help"
+      ],
+      "expect": [
+        "kmi exits 0"
+      ]
+    },
+    {
+      "id": "ensure_env",
+      "sudo": false,
+      "cwd": "$REPO_DIR",
+      "commands": [
+        "rg -n \"KMI_PROXY_LISTEN\" .env || true",
+        "printf '%s\n' \"KMI_PROXY_LISTEN=127.0.0.1:${PROXY_PORT}\" >> .env"
+      ],
+      "expect": [
+        ".env contains KMI_PROXY_LISTEN"
+      ]
+    },
+    {
+      "id": "ensure_shell_env",
+      "sudo": false,
+      "commands": [
+        "rg -n \"KIMI_BASE_URL\" ~/.zshrc || true",
+        "printf '%s\n' 'export KMI_ENV_PATH=\"'$REPO_DIR'/.env\"' >> ~/.zshrc",
+        "printf '%s\n' 'export KIMI_BASE_URL=\"http://127.0.0.1:${PROXY_PORT}/kmi-rotor/v1\"' >> ~/.zshrc",
+        "printf '%s\n' 'export KIMI_API_KEY=\"proxy\"' >> ~/.zshrc",
+        "printf '%s\n' 'export TZ=\"${TIMEZONE}\"' >> ~/.zshrc",
+        "printf '%s\n' 'export KMI_TIMEZONE=\"${TIMEZONE}\"' >> ~/.zshrc",
+        "printf '%s\n' 'alias kimi='\"'\"'KIMI_BASE_URL=\\\"http://127.0.0.1:${PROXY_PORT}/kmi-rotor/v1\\\" KIMI_API_KEY=\\\"proxy\\\" command kimi'\"'\"'' >> ~/.zshrc",
+        "source ~/.zshrc"
+      ],
+      "expect": [
+        "echo $KIMI_BASE_URL shows proxy URL",
+        "alias kimi is set"
+      ]
+    },
+    {
+      "id": "start_proxy",
+      "sudo": false,
+      "commands": [
+        "kmi proxy"
+      ],
+      "expect": [
+        "proxy starts listening on PROXY_PORT"
+      ]
+    },
+    {
+      "id": "enable_auto_rotate",
+      "sudo": false,
+      "commands": [
+        "kmi rotate auto"
+      ],
+      "expect": [
+        "auto-rotation enabled"
+      ]
+    },
+    {
+      "id": "trace_and_test",
+      "sudo": false,
+      "commands": [
+        "kmi --trace",
+        "kmi kimi --final-message-only --print -c \"test\""
+      ],
+      "expect": [
+        "trace contains /chat/completions"
+      ]
+    },
+    {
+      "id": "doctor",
+      "sudo": false,
+      "commands": [
+        "kmi doctor"
+      ],
+      "expect": [
+        "no FAIL in summary"
+      ]
+    }
+  ],
+  "sudo_tasks": [
+    {
+      "id": "system_timezone",
+      "commands": [
+        "sudo timedatectl set-timezone ${TIMEZONE}",
+        "timedatectl"
+      ]
+    },
+    {
+      "id": "install_lsof",
+      "commands": [
+        "sudo apt-get install lsof",
+        "sudo yum install lsof",
+        "brew install lsof"
+      ]
+    }
+  ],
+  "validation": [
+    "rg -n \"/chat/completions\" ~/.kmi/trace/trace.jsonl",
+    "kmi doctor"
+  ]
+}

@@ -1,0 +1,40 @@
+# Portable Docs Index
+
+- `README.md` — single-file runbook for quick start.
+- `01_SETUP_NO_SUDO.md` — full setup steps without sudo.
+- `02_SHELL_ENV.md` — shell env and alias rules (zsh).
+- `03_PROXY_OPS.md` — start/stop/restart proxy, port changes.
+- `04_TRACE_LOGS.md` — trace view, log locations, loop tests.
+- `05_DOCTOR.md` — doctor command, meaning of checks, fixes.
+- `06_TROUBLESHOOTING.md` — common failures and fixes.
+- `07_SECURITY_PERMS.md` — permissions and safety notes.
+- `08_SUDO_TASKS.md` — actions that require sudo.
+- `09_AGENT_PLAYBOOK.md` — minimal, linear AI‑agent script.
+- `10_PROXY_ROUTING_JOURNEY.md` — detailed journey: why kimi skipped proxy and how we fixed it (step‑by‑step).
+- `11_NEW_MACHINE.md` — portable setup for any new computer (parameterized).
+- `12_ARCHITECTURE.md` — high‑level architecture and data flow.
+- `13_CONFIG_REFERENCE.md` — full KMI_* config reference.
+- `14_COMMANDS_REFERENCE.md` — CLI commands and examples.
+- `15_AUTH_FILES.md` — auth formats and examples.
+- `16_PROXY_API.md` — proxy behavior, auth, TLS, rate limits.
+- `17_ROTATION_POLICY.md` — manual vs auto rotation details.
+- `18_HEALTH_USAGE.md` — health/usage behavior.
+- `19_TRACE_SCHEMA.md` — trace file fields.
+- `20_LOGGING.md` — logging format and rotation.
+- `21_DATA_PATHS.md` — file locations.
+- `22_TESTING.md` — how to run tests.
+- `23_UPGRADE_MIGRATION.md` — update and migration notes.
+- `24_FAQ.md` — common questions.
+- `25_RISKS_NOTES.md` — ToS and security notes.
+- `26_PROXY_ROUND_ROBIN_INTERNALS.md` — deep dive into proxy + round‑robin rotation internals.
+- `27_INTERCONNECTIONS.md` — map of how docs + snippets connect.
+- `28_REQUIREMENTS_MATRIX.md` — runtime + tooling requirements.
+- `29_PORT_ENV_CONFLICTS.md` — port/env conflict handling.
+- `30_AUTOMATION_SCRIPTS.md` — idempotent automation scripts.
+- `31_RETENTION_CLEANUP.md` — trace/log retention and cleanup.
+- `32_FAILURE_RECOVERY.md` — failure recovery runbook.
+- `33_FULL_CIRCLE_LOOPS.md` — 5 repeatable validation loops.
+- `34_AGENT_PLAN.json` — machine‑readable agent plan.
+- `rethink/README.md` — AI agent reasoning runbook.
+- `snippets/README.md` — snippet folder overview.
+- `snippets/00_INDEX.md` — code snippets index (by component).

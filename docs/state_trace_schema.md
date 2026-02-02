@@ -6,6 +6,7 @@
 - active_index: int
 - rotation_index: int
 - auto_rotate: bool
+- last_health_refresh: ISO8601 UTC timestamp (string or null)
 - keys: object keyed by label
   - last_used: ISO8601 UTC timestamp (string or null)
   - request_count: int
@@ -14,6 +15,8 @@
   - error_429: int
   - error_5xx: int
   - exhausted_until: ISO8601 UTC timestamp (string or null)
+  - blocked_until: ISO8601 UTC timestamp (string or null)
+  - blocked_reason: string or null
 
 ## trace.jsonl (schema_version 1)
 

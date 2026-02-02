@@ -35,6 +35,10 @@ kmi proxy
 ```
 
 Notes:
+- `kmi proxy` runs in background by default; use `kmi proxy --foreground` to keep it in the terminal.
+- `kmi doctor` shows a diagnostics report (proxy, env, auths, trace/log health).
+- `kmi proxy-logs --no-follow --lines 200` tails proxy daemon logs (`--app` for app logs).
+- `kmi proxy-logs --app --since 10m` filters app logs by time.
 - `KMI_DRY_RUN=1` means upstream requests are simulated. Set to `0` for live traffic.
 - Manual `--rotate` copies the selected `_auths/*.toml` into `~/.kimi/config.toml` when `KMI_WRITE_CONFIG=1` and dry-run is off.
 - `KMI_ROTATE_ON_TIE=1` makes manual rotate advance even when all keys are tied for best.
@@ -45,10 +49,20 @@ Notes:
 - Remote proxy binding requires `KMI_PROXY_ALLOW_REMOTE=1` and `KMI_PROXY_TOKEN`.
 - For non-local proxy binding, run behind TLS and set `KMI_PROXY_TLS_TERMINATED=1` (or set `KMI_PROXY_REQUIRE_TLS=0` to override).
 - Optional per-key limits: `KMI_PROXY_MAX_RPS_PER_KEY` and `KMI_PROXY_MAX_RPM_PER_KEY`.
+- Payment-required responses block keys for `KMI_PAYMENT_BLOCK_SECONDS` (set to 0 for manual unblock).
+- Strict pre-check: `KMI_REQUIRE_USAGE_BEFORE_REQUEST=1` blocks keys without a successful cached `/usages` check (refreshed in background every `KMI_USAGE_CACHE_SECONDS`). Use `KMI_FAIL_OPEN_ON_EMPTY_CACHE=1` to allow requests while the cache warms.
+- Blocklist auto recheck: `KMI_BLOCKLIST_RECHECK_SECONDS` interval with `KMI_BLOCKLIST_RECHECK_MAX` keys per pass.
 - `KMI_TIMEZONE` controls timestamps (default `local`; accepts `UTC`, `+03:00`, or IANA names).
 - `KMI_LOCALE` controls human-facing summaries (default `en`, set `ru` for Russian).
 - `--plain` / `--no-color` (or `KMI_PLAIN=1` / `KMI_NO_COLOR=1`) disable rich formatting.
 - `KMI_AUDIT_ACTOR` tags audit events (auto-rotate enable/disable, config writes).
+
+## Security and limitations
+
+- Remote proxy access must be explicitly enabled and protected with token + TLS.
+- State/log/trace files are plaintext; ensure filesystem permissions are tight.
+- Enable auto-rotation only when compliant with provider ToS.
+  - `KMI_ENFORCE_FILE_PERMS=1` (default) hardens permissions to 700/600 on POSIX systems.
 
 ## Paths
 
