@@ -281,6 +281,10 @@ def load_config(env_path: Optional[Path] = None) -> Config:
         os.getenv("KMI_FAIL_OPEN_ON_EMPTY_CACHE"),
         DEFAULT_KMI_FAIL_OPEN_ON_EMPTY_CACHE,
     )
+    rotate_include_warn = _parse_bool(
+        os.getenv("KMI_ROTATE_INCLUDE_WARN"),
+        DEFAULT_KMI_ROTATE_INCLUDE_WARN,
+    )
 
     return Config(
         auths_dir=auths_dir,
@@ -318,4 +322,5 @@ def load_config(env_path: Optional[Path] = None) -> Config:
         blocklist_recheck_seconds=blocklist_recheck_seconds,
         blocklist_recheck_max=blocklist_recheck_max,
         fail_open_on_empty_cache=fail_open_on_empty_cache,
+        rotate_include_warn=rotate_include_warn,
     )

@@ -561,6 +561,7 @@ def _select_key(ctx: ProxyContext) -> Optional[tuple[str, str]]:
         health=health,
         require_usage_ok=require_usage,
         fail_open_on_empty_cache=ctx.config.fail_open_on_empty_cache,
+        include_warn=ctx.config.rotate_include_warn,
     )
     if not key:
         return None

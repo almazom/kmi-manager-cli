@@ -127,6 +127,43 @@ def test_select_key_round_robin_falls_back_to_warn() -> None:
     assert key.label == "a"
 
 
+def test_select_key_round_robin_include_warn_rotates_all() -> None:
+    """When include_warn=True, warn keys are included in rotation."""
+    registry = Registry(
+        keys=[KeyRecord(label="a", api_key="sk-a"), KeyRecord(label="b", api_key="sk-b")]
+    )
+    state = State(rotation_index=0, keys={"a": KeyState(), "b": KeyState()})
+    health = {
+        "a": HealthInfo(
+            status="warn",
+            remaining_percent=10.0,
+            used=None,
+            limit=None,
+            remaining=None,
+            reset_hint=None,
+            limits=[],
+            error_rate=0.0,
+        ),
+        "b": HealthInfo(
+            status="healthy",
+            remaining_percent=90.0,
+            used=None,
+            limit=None,
+            remaining=None,
+            reset_hint=None,
+            limits=[],
+            error_rate=0.0,
+        ),
+    }
+    # With include_warn=True, both keys should rotate
+    key1 = select_key_round_robin(registry, state, health=health, include_warn=True)
+    assert key1.label == "a"  # First eligible (warn is now eligible)
+    key2 = select_key_round_robin(registry, state, health=health, include_warn=True)
+    assert key2.label == "b"  # Second eligible (healthy)
+    key3 = select_key_round_robin(registry, state, health=health, include_warn=True)
+    assert key3.label == "a"  # Back to first
+
+
 def test_rotate_manual_tie_prefer_next() -> None:
     registry = Registry(
         keys=[KeyRecord(label="a", api_key="sk-a"), KeyRecord(label="b", api_key="sk-b")],

@@ -315,11 +315,14 @@ def select_key_round_robin(
     health: Optional[dict[str, HealthInfo]] = None,
     require_usage_ok: bool = False,
     fail_open_on_empty_cache: bool = False,
+    include_warn: bool = False,
 ) -> Optional[KeyRecord]:
     if not registry.keys:
         return None
     total = len(registry.keys)
     start = state.rotation_index % total
+    # Determine which statuses are acceptable for rotation
+    acceptable_statuses = {"healthy", "warn"} if include_warn else {"healthy"}
     if health:
         for offset in range(total):
             idx = (start + offset) % total
@@ -327,7 +330,7 @@ def select_key_round_robin(
             info = health.get(candidate.label)
             if (
                 info
-                and info.status == "healthy"
+                and info.status in acceptable_statuses
                 and _is_eligible(candidate, state, health)
                 and _usage_ok(
                     health, candidate.label, require_usage_ok, fail_open_on_empty_cache
@@ -355,6 +358,7 @@ def select_key_for_request(
     health: Optional[dict[str, HealthInfo]] = None,
     require_usage_ok: bool = False,
     fail_open_on_empty_cache: bool = False,
+    include_warn: bool = False,
 ) -> Optional[KeyRecord]:
     if auto_rotate:
         return select_key_round_robin(
@@ -363,6 +367,7 @@ def select_key_for_request(
             health,
             require_usage_ok=require_usage_ok,
             fail_open_on_empty_cache=fail_open_on_empty_cache,
+            include_warn=include_warn,
         )
     active = registry.active_key
     if (
