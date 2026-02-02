@@ -9,6 +9,28 @@ if TYPE_CHECKING:
     from kmi_manager_cli.health import HealthInfo
 
 
+"""Key rotation algorithms and state management.
+
+This module implements the core rotation logic:
+- Manual rotation: Selects the key with the best health score
+- Auto-rotation: Round-robin selection among healthy keys
+- Key eligibility: Filters out disabled, blocked, exhausted, or 401-errored keys
+
+Key Functions:
+    rotate_manual: Selects the most resourceful key based on health data
+    select_key_round_robin: Cycles through keys in round-robin fashion
+    select_key_for_request: Chooses key based on auto_rotate setting
+    mark_blocked/mark_exhausted: Temporarily disable keys
+    is_blocked/is_exhausted: Check key availability status
+
+The rotation scoring prioritizes:
+1. Status rank (healthy > warn > blocked/exhausted)
+2. Remaining quota percentage (higher is better)
+3. Error rate (lower is better)
+4. Current key preference (stay on current if tied)
+"""
+
+
 def _is_eligible(
     key: KeyRecord, state: State, health: Optional[dict[str, HealthInfo]] = None
 ) -> bool:

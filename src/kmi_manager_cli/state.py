@@ -12,6 +12,29 @@ from kmi_manager_cli.locking import atomic_write_text, file_lock
 from kmi_manager_cli.logging import get_logger
 from kmi_manager_cli.security import ensure_secure_permissions, warn_if_insecure
 
+"""Persistent state management with schema versioning.
+
+This module handles loading, saving, and migrating the KMI state file
+(~/.kmi/state.json) which tracks rotation indices, key usage statistics,
+and block/exhaust status.
+
+Key Components:
+    State: Top-level state container with schema version
+    KeyState: Per-key statistics (errors, usage counts, block status)
+    load_state: Loads and migrates state from disk
+    save_state: Atomically writes state with file locking
+    record_request: Updates error counters based on HTTP status
+    mark_last_used: Updates last_used timestamp
+
+Schema Migration:
+    State includes schema_version field for forward compatibility.
+    _migrate_state handles upgrades from older versions.
+
+Thread Safety:
+    File locking via locking.file_lock ensures safe concurrent access.
+    In proxy contexts, use StateWriter for async-safe debounced writes.
+"""
+
 STATE_SCHEMA_VERSION = 1
 
 

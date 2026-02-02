@@ -37,6 +37,37 @@ if TYPE_CHECKING:
     from kmi_manager_cli.health import HealthInfo
 
 
+"""FastAPI-based async proxy server for request forwarding.
+
+This module implements the KMI proxy that sits between clients and the upstream
+API, handling key selection, rate limiting, retries, and error detection.
+
+Key Components:
+    create_app: Builds FastAPI application with all routes and middleware
+    ProxyContext: Shared state container (registry, state, limiters, writers)
+    RateLimiter: Token bucket rate limiter for global proxy limits
+    KeyedRateLimiter: Per-key rate limiting
+    StateWriter: Debounced async state persistence
+    TraceWriter: Async trace logging with queue
+
+Request Flow:
+    1. Token authentication (_authorize_request)
+    2. Global rate limit check (RateLimiter)
+    3. Key selection (select_key_for_request)
+    4. Per-key rate limit check (KeyedRateLimiter)
+    5. Upstream request with retry logic
+    6. Error detection (402/403/429/5xx handling)
+    7. State update and trace write
+
+Features:
+    - Streaming response support
+    - Payment error detection (blocks keys with billing issues)
+    - Retry with exponential backoff
+    - Background health refresh loop
+    - Blocklist rechecking for recovery
+"""
+
+
 _HOP_BY_HOP_HEADERS = {
     "connection",
     "keep-alive",

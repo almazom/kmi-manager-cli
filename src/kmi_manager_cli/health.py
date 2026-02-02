@@ -13,6 +13,26 @@ from kmi_manager_cli.state import KeyState, State
 from kmi_manager_cli.rotation import is_blocked, is_exhausted
 
 
+"""Health monitoring and usage fetching for API keys.
+
+This module handles fetching and parsing quota usage from the upstream API's
+/usages endpoint, converting raw responses into structured health information.
+
+Key Functions:
+    fetch_usage: Calls /usages endpoint and parses response
+    get_health_map: Builds health info for all keys in registry
+    score_key: Converts usage data to status (healthy/warn/blocked/exhausted)
+
+Data Structures:
+    Usage: Parsed quota information (used/limit/remaining/percent)
+    LimitInfo: Individual rate limit window details
+    HealthInfo: Complete health status with error rates and usage
+
+The module handles multiple API response formats and normalizes them into
+a consistent structure for rotation decisions.
+"""
+
+
 @dataclass
 class Usage:
     remaining_percent: Optional[float]

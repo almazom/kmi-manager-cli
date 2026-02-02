@@ -38,10 +38,36 @@ DEFAULT_KMI_TIMEZONE = "local"
 DEFAULT_KMI_ENFORCE_FILE_PERMS = True
 DEFAULT_KMI_PAYMENT_BLOCK_SECONDS = 3600
 DEFAULT_KMI_REQUIRE_USAGE_BEFORE_REQUEST = False
+
+
+"""Configuration loading and validation.
+
+This module handles all configuration for KMI Manager CLI, loading from
+environment variables and optional .env files. All configuration is
+validated and normalized into an immutable Config dataclass.
+
+Key Components:
+    Config: Frozen dataclass containing all settings
+    load_config: Loads and validates configuration from environment
+    validate_base_url: Ensures upstream URLs use HTTPS and match allowlist
+
+Configuration Sources (in order of precedence):
+    1. Explicit env_path argument to load_config()
+    2. KMI_ENV_PATH environment variable
+    3. .env file in project root
+    4. Existing environment variables
+    5. Default constants (DEFAULT_*)
+
+Security Features:
+    - URL allowlist validation (KMI_UPSTREAM_ALLOWLIST)
+    - HTTPS enforcement for upstream URLs
+    - File permission hardening option (KMI_ENFORCE_FILE_PERMS)
+"""
 DEFAULT_KMI_USAGE_CACHE_SECONDS = 600
 DEFAULT_KMI_BLOCKLIST_RECHECK_SECONDS = 3600
 DEFAULT_KMI_BLOCKLIST_RECHECK_MAX = 3
 DEFAULT_KMI_FAIL_OPEN_ON_EMPTY_CACHE = True
+DEFAULT_KMI_ROTATE_INCLUDE_WARN = False
 
 
 def _parse_bool(value: Optional[str], default: bool) -> bool:
@@ -141,6 +167,7 @@ class Config:
     blocklist_recheck_seconds: int = DEFAULT_KMI_BLOCKLIST_RECHECK_SECONDS
     blocklist_recheck_max: int = DEFAULT_KMI_BLOCKLIST_RECHECK_MAX
     fail_open_on_empty_cache: bool = DEFAULT_KMI_FAIL_OPEN_ON_EMPTY_CACHE
+    rotate_include_warn: bool = DEFAULT_KMI_ROTATE_INCLUDE_WARN
 
 
 def _resolve_auths_dir() -> Path:

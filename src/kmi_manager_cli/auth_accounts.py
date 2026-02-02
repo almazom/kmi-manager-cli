@@ -18,6 +18,36 @@ except ModuleNotFoundError:  # pragma: no cover - py<3.11 fallback
     import tomli as tomllib
 
 
+"""Authentication account loading from multiple file formats.
+
+This module parses auth files in .env, .toml, .json, and .json.bak formats,
+extracting API credentials and account metadata for use in rotation and
+health monitoring.
+
+Key Components:
+    Account: Dataclass holding credentials and metadata for an auth source
+    load_accounts_from_auths_dir: Scans directory and loads all accounts
+    load_current_account: Loads the active account from ~/.kimi/config.toml
+    copy_account_config: Copies selected auth to Kimi CLI config
+
+File Format Support:
+    .env: KEY=VALUE format with KMI_API_KEY, KMI_KEY_LABEL, etc.
+    .toml: Kimi CLI config format with [providers.*] sections
+    .json/.bak: JSON format with providers object
+
+Provider Selection:
+    For multi-provider configs, selects in priority order:
+    1. managed:kimi-code
+    2. kimi-for-coding
+    3. moonshot-ai
+    4. First available with api_key
+
+Email Extraction:
+    Attempts to extract account email from various fields for display
+    in health dashboards.
+"""
+
+
 @dataclass
 class Account:
     id: str
