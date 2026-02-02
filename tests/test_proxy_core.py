@@ -6,30 +6,8 @@ from types import SimpleNamespace
 from starlette.requests import Request
 
 from kmi_manager_cli import proxy as proxy_module
-from kmi_manager_cli.config import Config
 from kmi_manager_cli.keys import KeyRecord, Registry
 from kmi_manager_cli.state import State
-
-
-def _make_config(tmp_path) -> Config:
-    return Config(
-        auths_dir=tmp_path,
-        proxy_listen="127.0.0.1:54123",
-        proxy_base_path="/kmi-rotor/v1",
-        upstream_base_url="https://example.com/api",
-        state_dir=tmp_path,
-        dry_run=True,
-        auto_rotate_allowed=True,
-        rotation_cooldown_seconds=300,
-        proxy_allow_remote=False,
-        proxy_token="",
-        proxy_max_rps=0,
-        proxy_max_rpm=0,
-        proxy_retry_max=0,
-        proxy_retry_base_ms=250,
-        env_path=None,
-        enforce_file_perms=False,
-    )
 
 
 def _make_request(headers: dict[str, str]) -> Request:
@@ -60,8 +38,8 @@ def test_parse_listen_invalid() -> None:
         raise AssertionError("Expected ValueError")
 
 
-def test_build_upstream_url_with_query(tmp_path) -> None:
-    config = _make_config(tmp_path)
+def test_build_upstream_url_with_query(tmp_path, make_config) -> None:
+    config = make_config(upstream_base_url="https://example.com/api")
     url = proxy_module._build_upstream_url(config, "models", "a=1")
     assert url == "https://example.com/api/models?a=1"
 
@@ -122,8 +100,8 @@ def test_keyed_rate_limiter(monkeypatch) -> None:
     asyncio.run(run())
 
 
-def test_select_key_uses_active_key(tmp_path) -> None:
-    config = _make_config(tmp_path)
+def test_select_key_uses_active_key(tmp_path, make_config) -> None:
+    config = make_config(upstream_base_url="https://example.com/api")
     registry = Registry(keys=[KeyRecord(label="a", api_key="sk-a")], active_index=0)
     state = State(active_index=0)
     ctx = proxy_module.ProxyContext(
@@ -140,8 +118,8 @@ def test_select_key_uses_active_key(tmp_path) -> None:
     assert selected == ("a", "sk-a")
 
 
-def test_state_writer_mark_dirty_without_task(monkeypatch, tmp_path) -> None:
-    config = _make_config(tmp_path)
+def test_state_writer_mark_dirty_without_task(monkeypatch, tmp_path, make_config) -> None:
+    config = make_config(upstream_base_url="https://example.com/api")
     state = State()
     lock = asyncio.Lock()
     writer = proxy_module.StateWriter(config=config, state=state, lock=lock)
@@ -159,8 +137,8 @@ def test_state_writer_mark_dirty_without_task(monkeypatch, tmp_path) -> None:
     assert calls["saved"] == 1
 
 
-def test_trace_writer_enqueue_without_task(monkeypatch, tmp_path) -> None:
-    config = _make_config(tmp_path)
+def test_trace_writer_enqueue_without_task(monkeypatch, tmp_path, make_config) -> None:
+    config = make_config(upstream_base_url="https://example.com/api")
     logger = SimpleNamespace(info=lambda *a, **k: None, warning=lambda *a, **k: None)
     writer = proxy_module.TraceWriter(config=config, logger=logger)
     calls = {"count": 0}
