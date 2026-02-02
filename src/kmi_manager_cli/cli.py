@@ -703,6 +703,12 @@ def _proxy_daemon_log_path(config: Config) -> Path:
     return log_dir / "proxy.out"
 
 
+def _proxy_pid_path(config: Config) -> Path:
+    pid_dir = config.state_dir.expanduser()
+    pid_dir.mkdir(parents=True, exist_ok=True)
+    return pid_dir / "proxy.pid"
+
+
 def _app_log_path(config: Config) -> Path:
     log_dir = config.state_dir.expanduser() / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -830,6 +836,11 @@ def _start_proxy_daemon(config: Config) -> None:
         start_new_session=True,
     )
     handle.close()
+    pid_path = _proxy_pid_path(config)
+    try:
+        pid_path.write_text(str(proc.pid), encoding="utf-8")
+    except OSError:
+        typer.echo("⚠️ Unable to write proxy PID file; proxy-stop may be unsafe.")
     typer.echo("✅ Proxy started in background (daemon).")
     typer.echo(f"PID: {proc.pid}")
     typer.echo(f"Logs: {log_path}")
@@ -893,6 +904,24 @@ def _terminate_pids(pids: list[int], force: bool) -> None:
 
 def _stop_proxy(config: Config, *, yes: bool, force: bool) -> bool:
     host, port = parse_listen(config.proxy_listen)
+    pid_path = _proxy_pid_path(config)
+    if pid_path.exists():
+        try:
+            pid = int(pid_path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            pid_path.unlink(missing_ok=True)
+        else:
+            if not yes and not typer.confirm(f"Stop proxy PID {pid}?"):
+                return False
+            sig = signal.SIGKILL if force else signal.SIGTERM
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                pid_path.unlink(missing_ok=True)
+            else:
+                pid_path.unlink(missing_ok=True)
+                typer.echo("Proxy stopped.")
+                return True
     pids = _find_listening_pids(port)
     if pids is None:
         typer.echo("Unable to find proxy PID because 'lsof' is not available.")
@@ -914,12 +943,19 @@ def _stop_proxy(config: Config, *, yes: bool, force: bool) -> bool:
 def _read_new_trace_entries(path: Path, offset: int) -> tuple[list[dict], int]:
     if not path.exists():
         return [], offset
+    size = path.stat().st_size
+    if size < offset:
+        offset = 0
     with path.open("rb") as handle:
         handle.seek(offset)
         data = handle.read()
     if not data:
         return [], offset
-    new_offset = offset + len(data)
+    last_newline = data.rfind(b"\n")
+    if last_newline == -1:
+        return [], offset
+    data = data[: last_newline + 1]
+    new_offset = offset + last_newline + 1
     entries: list[dict] = []
     for line in data.splitlines():
         try:
