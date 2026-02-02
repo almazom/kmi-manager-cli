@@ -20,6 +20,36 @@ from kmi_manager_cli.time_utils import (
 )
 
 
+"""Terminal UI rendering using Rich.
+
+This module provides all user-facing output formatting, including tables,
+dashboards, and health displays. Supports both rich formatted output and
+plain text mode (KMI_PLAIN=1).
+
+Key Components:
+    get_console: Returns Rich Console (respects KMI_NO_COLOR/KMI_PLAIN)
+    render_registry_table: Simple table of keys with status
+    render_rotation_dashboard: Post-rotation status display
+    render_health_dashboard: Detailed health for all keys
+    render_accounts_health_dashboard: Full account health with limits
+
+Localization:
+    Partial Russian locale support (KMI_LOCALE=ru) for rotation messages.
+
+Output Modes:
+    Rich: Full color, panels, tables (default)
+    Plain: KMI_PLAIN=1 or KMI_NO_COLOR=1 disables formatting
+
+Dashboard Features:
+    - Color-coded status (green=OK, yellow=WARN, red=BLOCKED)
+    - Quota percentages and usage counts
+    - Reset time formatting (human-readable durations)
+    - Error rate display
+    - Limit window display (week/day/hour)
+    - Current key highlighting
+"""
+
+
 def _plain_output() -> bool:
     return (
         os.getenv("KMI_PLAIN") == "1"
@@ -441,6 +471,135 @@ def _limit_title(limit: LimitInfo) -> str:
     return "Limit"
 
 
+def _build_alias_map(accounts: list[Account]) -> dict[tuple[str, str], list[str]]:
+    """Build mapping of (base_url, api_key) to list of labels."""
+    aliases: dict[tuple[str, str], list[str]] = {}
+    for account in accounts:
+        key = (account.base_url, account.api_key)
+        aliases.setdefault(key, []).append(account.label)
+    return aliases
+
+
+def _compute_usage_signature(info: Optional[HealthInfo]) -> Optional[tuple]:
+    """Compute a signature for usage comparison between accounts."""
+    if info is None:
+        return None
+    week = None
+    rate = None
+    for limit in info.limits:
+        hours = limit.window_hours or 0
+        entry = (limit.used, limit.limit, _reset_seconds(limit.reset_hint))
+        if hours >= 24 * 5:
+            week = entry
+        elif hours <= 6:
+            rate = entry
+    return (info.used, info.limit, _reset_seconds(info.reset_hint), week, rate)
+
+
+def _resolve_account_email(
+    account: Account,
+    info: Optional[HealthInfo],
+    aliases: dict[tuple[str, str], list[str]],
+    email_by_label: dict[str, str],
+) -> tuple[Optional[str], Optional[str]]:
+    """Resolve email and alias_of for an account."""
+    alias_of = None
+    alias_labels = aliases.get((account.base_url, account.api_key), [])
+    if len(alias_labels) > 1:
+        if account.label.startswith("current:"):
+            preferred = [
+                label
+                for label in alias_labels
+                if label != account.label and not label.startswith("current:")
+            ]
+            alias_of = preferred[0] if preferred else None
+        else:
+            has_current = any(label.startswith("current:") for label in alias_labels)
+            if not has_current:
+                preferred = [label for label in alias_labels if label != account.label]
+                alias_of = preferred[0] if preferred else None
+
+    email = account.email or (info.email if info else None)
+    if email is None and alias_of:
+        email = email_by_label.get(alias_of)
+
+    return email, alias_of
+
+
+def _find_next_candidate(rows: list[dict]) -> Optional[dict]:
+    """Find the next best candidate key for rotation."""
+
+    def row_reset_seconds(row: dict) -> Optional[int]:
+        seconds: list[int] = []
+        primary = _reset_seconds(row.get("reset"))
+        if primary is not None:
+            seconds.append(primary)
+        for limit in row.get("limits", []):
+            sec = _reset_seconds(limit.reset_hint)
+            if sec is not None:
+                seconds.append(sec)
+        return min(seconds) if seconds else None
+
+    candidates = [
+        row
+        for row in rows
+        if (not row["is_current"])
+        and row["status"] not in {"blocked", "exhausted", "disabled"}
+        and row["remaining"] is not None
+    ]
+    if not candidates:
+        return None
+
+    def candidate_key(r: dict) -> tuple:
+        reset_sec = row_reset_seconds(r)
+        return (
+            reset_sec if reset_sec is not None else float("inf"),
+            r["remaining"] if r["remaining"] is not None else float("inf"),
+            r["label"],
+        )
+
+    return min(candidates, key=candidate_key)
+
+
+def _compute_display_status(row: dict, highlight: bool) -> dict:
+    """Compute display status, icon, color, and group for a row."""
+    if row["status"] in {"blocked", "exhausted"}:
+        return {
+            "display_status": "EXHAUSTED",
+            "display_icon": "🔴",
+            "display_color": "red",
+            "display_group": 3,
+        }
+    elif row["status"] == "disabled":
+        return {
+            "display_status": "DISABLED",
+            "display_icon": "🔴",
+            "display_color": "red",
+            "display_group": 3,
+        }
+    elif row["status"] == "warn":
+        return {
+            "display_status": "WARN",
+            "display_icon": "🟧",
+            "display_color": "orange3",
+            "display_group": 1,
+        }
+    elif highlight:
+        return {
+            "display_status": "NEXT",
+            "display_icon": "🟢",
+            "display_color": "green",
+            "display_group": 2,
+        }
+    else:
+        return {
+            "display_status": "OK",
+            "display_icon": "🟢",
+            "display_color": "green",
+            "display_group": 2,
+        }
+
+
 def render_accounts_health_dashboard(
     accounts: list[Account],
     state: State,
@@ -449,44 +608,27 @@ def render_accounts_health_dashboard(
     console: Optional[Console] = None,
     time_zone: Optional[str] = None,
 ) -> None:
+    """Render a comprehensive health dashboard for all accounts.
+    
+    Args:
+        accounts: List of accounts to display
+        state: Current state with key usage information
+        health: Health info mapping by account ID
+        dry_run: Whether to show dry-run warning
+        console: Optional Rich console (creates default if None)
+        time_zone: Timezone for timestamp formatting
+    """
     console = get_console(console)
     ok = warn = red = unknown = 0
     show_source = os.getenv("KMI_SHOW_SOURCE") == "1"
     if dry_run:
         console.print("DRY RUN: upstream requests are simulated.")
     rows = []
-    aliases: dict[tuple[str, str], list[str]] = {}
-    for account in accounts:
-        key = (account.base_url, account.api_key)
-        aliases.setdefault(key, []).append(account.label)
+    aliases = _build_alias_map(accounts)
     email_by_label = {
         account.label: account.email for account in accounts if account.email
     }
     key_to_auth_label: dict[tuple[str, str], str] = {}
-
-    def usage_signature(info: Optional[HealthInfo]) -> Optional[tuple]:
-        if info is None:
-            return None
-        week = None
-        rate = None
-        for limit in info.limits:
-            hours = limit.window_hours or 0
-            entry = (
-                limit.used,
-                limit.limit,
-                _reset_seconds(limit.reset_hint),
-            )
-            if hours >= 24 * 5:
-                week = entry
-            elif hours <= 6:
-                rate = entry
-        return (
-            info.used,
-            info.limit,
-            _reset_seconds(info.reset_hint),
-            week,
-            rate,
-        )
 
     signature_to_label: dict[tuple, str] = {}
     signature_ambiguous: set[tuple] = set()
@@ -496,7 +638,7 @@ def render_accounts_health_dashboard(
             continue
         key_to_auth_label[(account.base_url, account.api_key)] = account.label
         info = health.get(account.id)
-        sig = usage_signature(info)
+        sig = _compute_usage_signature(info)
         if sig is None:
             continue
         if sig in signature_to_label:
@@ -517,36 +659,13 @@ def render_accounts_health_dashboard(
         else:
             unknown += 1
 
-        alias_of = None
-        alias_labels = aliases.get((account.base_url, account.api_key), [])
-        if len(alias_labels) > 1:
-            if account.label.startswith("current:"):
-                preferred = [
-                    label
-                    for label in alias_labels
-                    if label != account.label and not label.startswith("current:")
-                ]
-                alias_of = preferred[0] if preferred else None
-            else:
-                has_current = any(
-                    label.startswith("current:") for label in alias_labels
-                )
-                if not has_current:
-                    preferred = [
-                        label for label in alias_labels if label != account.label
-                    ]
-                    alias_of = preferred[0] if preferred else None
-        email = (
-            account.email
-            or (info.email if info else None)
-            or (email_by_label.get(alias_of) if alias_of else None)
-        )
+        email, alias_of = _resolve_account_email(account, info, aliases, email_by_label)
 
         matched_label = None
         if account.label.startswith("current:") or account.id == "current":
             matched_label = key_to_auth_label.get((account.base_url, account.api_key))
             if matched_label is None:
-                sig = usage_signature(info)
+                sig = _compute_usage_signature(info)
                 if sig is not None and sig not in signature_ambiguous:
                     matched_label = signature_to_label.get(sig)
 
@@ -608,53 +727,14 @@ def render_accounts_health_dashboard(
             return None
         return min(seconds)
 
-    candidates = [
-        row
-        for row in rows
-        if (not row["is_current"])
-        and row["status"] not in {"blocked", "exhausted", "disabled"}
-        and row["remaining"] is not None
-    ]
-    if candidates:
-
-        def candidate_key(r: dict) -> tuple:
-            reset_sec = row_reset_seconds(r)
-            return (
-                reset_sec if reset_sec is not None else float("inf"),
-                r["remaining"] if r["remaining"] is not None else float("inf"),
-                r["label"],
-            )
-
-        next_candidate = min(candidates, key=candidate_key)
+    next_candidate = _find_next_candidate(rows)
+    if next_candidate:
         next_candidate["highlight_next"] = True
 
     for row in rows:
         highlight = row.get("highlight_next", False)
-        if row["status"] in {"blocked", "exhausted"}:
-            row["display_status"] = "EXHAUSTED"
-            row["display_icon"] = "🔴"
-            row["display_color"] = "red"
-            row["display_group"] = 3
-        elif row["status"] == "disabled":
-            row["display_status"] = "DISABLED"
-            row["display_icon"] = "🔴"
-            row["display_color"] = "red"
-            row["display_group"] = 3
-        elif row["status"] == "warn":
-            row["display_status"] = "WARN"
-            row["display_icon"] = "🟧"
-            row["display_color"] = "orange3"
-            row["display_group"] = 1
-        elif highlight:
-            row["display_status"] = "NEXT"
-            row["display_icon"] = "🟢"
-            row["display_color"] = "green"
-            row["display_group"] = 2
-        else:
-            row["display_status"] = "OK"
-            row["display_icon"] = "🟢"
-            row["display_color"] = "green"
-            row["display_group"] = 2
+        display_props = _compute_display_status(row, highlight)
+        row.update(display_props)
 
     rows.sort(
         key=lambda r: (
