@@ -7,7 +7,6 @@ import threading
 import time
 from pathlib import Path
 
-import pytest
 
 from kmi_manager_cli.locking import atomic_write_text, file_lock, _lock_path
 
@@ -132,6 +131,57 @@ class TestFileLock:
         
         # Should complete without error
         assert True
+
+    def test_windows_fallback_lock(self, monkeypatch, tmp_path: Path) -> None:
+        """Test the fallback lock path when fcntl is unavailable."""
+        from kmi_manager_cli import locking
+
+        monkeypatch.setattr(locking, "fcntl", None)
+        target = tmp_path / "target.txt"
+        lock_file = locking._lock_path(target)
+        win_lock = Path(str(lock_file) + ".win")
+
+        with locking.file_lock(target):
+            assert win_lock.exists()
+
+        assert not win_lock.exists()
+
+    def test_windows_fallback_handles_file_exists(self, monkeypatch, tmp_path: Path) -> None:
+        from kmi_manager_cli import locking
+
+        monkeypatch.setattr(locking, "fcntl", None)
+        target = tmp_path / "target.txt"
+        lock_file = locking._lock_path(target)
+        win_lock = Path(str(lock_file) + ".win")
+
+        orig_open = os.open
+        calls = {"count": 0}
+
+        def fake_open(path, flags, mode=0o777):
+            if calls["count"] == 0:
+                calls["count"] += 1
+                raise FileExistsError
+            return orig_open(path, flags, mode)
+
+        monkeypatch.setattr(os, "open", fake_open)
+
+        with locking.file_lock(target):
+            assert win_lock.exists()
+
+        assert calls["count"] == 1
+
+    def test_windows_fallback_handles_unlink_missing(self, monkeypatch, tmp_path: Path) -> None:
+        from kmi_manager_cli import locking
+
+        monkeypatch.setattr(locking, "fcntl", None)
+        target = tmp_path / "target.txt"
+        lock_file = locking._lock_path(target)
+        win_lock = Path(str(lock_file) + ".win")
+
+        monkeypatch.setattr(os, "unlink", lambda _path: (_ for _ in ()).throw(FileNotFoundError()))
+
+        with locking.file_lock(target):
+            assert win_lock.exists()
 
 
 class TestPlatformSpecific:

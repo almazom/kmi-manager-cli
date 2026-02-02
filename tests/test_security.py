@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import stat
 from pathlib import Path
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -256,11 +256,9 @@ class TestEnsureSecurePermissions:
         mock_logger = MagicMock()
         
         # Make chmod fail
-        original_chmod = os.chmod
         def failing_chmod(path, mode):
             raise PermissionError("Cannot change mode")
         
-        import kmi_manager_cli.security as security_module
         monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr(os, "chmod", failing_chmod)
         
@@ -285,9 +283,45 @@ class TestEnsureSecurePermissions:
         mock_logger.info.side_effect = Exception("extra not supported")
         
         # Make chmod succeed
-        original_mode = test_file.stat().st_mode
         
         ensure_secure_permissions(test_file, mock_logger, "test", is_dir=False, enforce=True)
         
         # Should try info, fail, then try warning
         assert mock_logger.info.call_count >= 1
+
+    def test_handles_stat_error(self, tmp_path: Path, monkeypatch) -> None:
+        """Test that stat errors are handled gracefully."""
+        if os.name == "nt":
+            pytest.skip("Permission tests don't apply on Windows")
+
+        test_file = tmp_path / "insecure.txt"
+        test_file.write_text("content")
+        test_file.chmod(0o644)
+
+        def failing_stat(_self):
+            raise OSError("stat failed")
+
+        monkeypatch.setattr(Path, "exists", lambda _self: True)
+        monkeypatch.setattr(Path, "stat", failing_stat)
+
+        mock_logger = MagicMock()
+        ensure_secure_permissions(test_file, mock_logger, "test", is_dir=False, enforce=True)
+        mock_logger.info.assert_not_called()
+        mock_logger.warning.assert_not_called()
+
+    def test_warning_fallback_on_chmod_failure(self, tmp_path: Path, monkeypatch) -> None:
+        """Test fallback warning when warn with extra fails."""
+        if os.name == "nt":
+            pytest.skip("Permission tests don't apply on Windows")
+
+        test_file = tmp_path / "insecure.txt"
+        test_file.write_text("content")
+        test_file.chmod(0o644)
+
+        monkeypatch.setattr(os, "chmod", lambda *_a, **_k: (_ for _ in ()).throw(PermissionError("fail")))
+
+        mock_logger = MagicMock()
+        mock_logger.warning.side_effect = [Exception("extra"), None]
+
+        ensure_secure_permissions(test_file, mock_logger, "test", is_dir=False, enforce=True)
+        assert mock_logger.warning.call_count == 2
