@@ -5,6 +5,8 @@ import os
 import socket
 import subprocess
 import time
+import shutil
+import signal
 import typer
 import httpx
 
@@ -17,6 +19,7 @@ from kmi_manager_cli.config import (
     DEFAULT_KMI_DRY_RUN,
     DEFAULT_KMI_WRITE_CONFIG,
     DEFAULT_KMI_ROTATE_ON_TIE,
+    DEFAULT_KMI_PAYMENT_BLOCK_SECONDS,
     Config,
     load_config,
 )
@@ -34,11 +37,21 @@ from kmi_manager_cli.health import get_accounts_health, get_health_map
 from kmi_manager_cli.keys import Registry, load_auths_dir
 from kmi_manager_cli.logging import get_logger
 from kmi_manager_cli.proxy import parse_listen, run_proxy
-from kmi_manager_cli.rotation import rotate_manual
+from kmi_manager_cli.rotation import is_blocked, is_exhausted, rotate_manual
 from kmi_manager_cli.state import load_state, save_state
 from kmi_manager_cli.trace import compute_confidence, compute_distribution, trace_path
 from kmi_manager_cli.trace_tui import run_trace_tui
-from kmi_manager_cli.ui import render_accounts_health_dashboard, render_health_dashboard, render_registry_table, render_rotation_dashboard
+from rich.console import Group
+from rich.panel import Panel
+from rich.text import Text
+from kmi_manager_cli.ui import (
+    get_console,
+    render_accounts_health_dashboard,
+    render_health_dashboard,
+    render_registry_table,
+    render_rotation_dashboard,
+)
+from kmi_manager_cli.doctor import run_doctor
 
 DEFAULT_E2E_REQUESTS = 50
 DEFAULT_E2E_BATCH = 10
@@ -60,6 +73,12 @@ APP_HELP = (
     f"  KMI_STATE_DIR={DEFAULT_KMI_STATE_DIR}\n"
     f"  KMI_DRY_RUN={DEFAULT_KMI_DRY_RUN}\n"
     "  KMI_AUTO_ROTATE_E2E=1\n"
+    f"  KMI_PAYMENT_BLOCK_SECONDS={DEFAULT_KMI_PAYMENT_BLOCK_SECONDS}\n"
+    "  KMI_REQUIRE_USAGE_BEFORE_REQUEST=0\n"
+    "  KMI_USAGE_CACHE_SECONDS=600\n"
+    "  KMI_BLOCKLIST_RECHECK_SECONDS=3600\n"
+    "  KMI_BLOCKLIST_RECHECK_MAX=3\n"
+    "  KMI_FAIL_OPEN_ON_EMPTY_CACHE=1\n"
     f"  KMI_WRITE_CONFIG={DEFAULT_KMI_WRITE_CONFIG}\n"
     f"  KMI_ROTATE_ON_TIE={DEFAULT_KMI_ROTATE_ON_TIE}\n"
     "\n"
@@ -266,14 +285,178 @@ def _render_current_health(config) -> None:
     render_accounts_health_dashboard([current], state, health, dry_run=config.dry_run, time_zone=config.time_zone)
 
 
-def _render_status(config) -> None:
-    _note_mode(config)
-    registry = _load_registry_or_exit(config)
-    state = load_state(config, registry)
+def _build_status_payload(config, registry, state) -> dict:
     idx = max(0, min(state.active_index, len(registry.keys) - 1))
     active_label = registry.keys[idx].label if registry.keys else "none"
-    typer.echo(f"Active key: {active_label}")
-    typer.echo(f"Active index: {state.active_index} | Rotation index: {state.rotation_index} | Auto-rotate: {state.auto_rotate}")
+    total_keys = len(registry.keys)
+    disabled = sum(1 for key in registry.keys if key.disabled)
+    blocked = sum(1 for key in registry.keys if is_blocked(state, key.label))
+    exhausted = sum(1 for key in registry.keys if is_exhausted(state, key.label))
+
+    host, port = parse_listen(config.proxy_listen)
+    connect_host = _normalize_connect_host(host)
+    listening = _proxy_listening(connect_host, port)
+    pids = _find_listening_pids(port) if listening else None
+
+    return {
+        "mode": "dry-run" if config.dry_run else "live",
+        "proxy": {
+            "running": listening,
+            "host": connect_host,
+            "port": port,
+            "url": _proxy_base_url(config),
+            "pids": pids,
+            "daemon_log": str(_proxy_daemon_log_path(config)),
+        },
+        "upstream": config.upstream_base_url,
+        "keys": {
+            "total": total_keys,
+            "disabled": disabled,
+            "blocked": blocked,
+            "exhausted": exhausted,
+        },
+        "active_key": active_label,
+        "rotation": {
+            "active_index": state.active_index,
+            "rotation_index": state.rotation_index,
+            "auto_rotate": state.auto_rotate,
+        },
+        "policy": {
+            "strict_usage_check": config.require_usage_before_request,
+            "fail_open_on_empty_cache": config.fail_open_on_empty_cache,
+        },
+        "cache": {
+            "usage_refresh_seconds": config.usage_cache_seconds,
+            "blocklist_recheck_seconds": config.blocklist_recheck_seconds,
+            "blocklist_max": config.blocklist_recheck_max,
+        },
+        "payment_block_seconds": config.payment_block_seconds,
+        "last_health_refresh": state.last_health_refresh,
+    }
+
+
+def _status_badge(ok: bool, warn: bool = False) -> tuple[str, str]:
+    if ok:
+        return "🟢", "green"
+    if warn:
+        return "🟧", "yellow"
+    return "🔴", "red"
+
+
+def _render_status(config, *, as_json: bool = False) -> None:
+    if not as_json:
+        _note_mode(config)
+    registry = _load_registry_or_exit(config)
+    state = load_state(config, registry)
+    payload = _build_status_payload(config, registry, state)
+    if as_json:
+        typer.echo(json.dumps(payload, indent=2, ensure_ascii=True))
+        return
+    console = get_console()
+
+    proxy = payload["proxy"]
+    pids = proxy["pids"]
+    if not proxy["running"]:
+        pid_text = "n/a"
+    elif pids is None:
+        pid_text = "unknown (lsof missing)"
+    elif not pids:
+        pid_text = "unknown"
+    else:
+        pid_text = ", ".join(str(pid) for pid in pids)
+
+    title = Text("=== KMI Status ===", style="bold")
+    console.print(title)
+
+    proxy_emoji, proxy_color = _status_badge(proxy["running"])
+    proxy_lines = [
+        Text.assemble(
+            (f"{proxy_emoji} ", proxy_color),
+            ("Status: ", "bold"),
+            ("running" if proxy["running"] else "stopped", proxy_color),
+            (f" on {proxy['host']}:{proxy['port']} (pid: {pid_text})", ""),
+        ),
+        Text.assemble(("🔗 Proxy URL: ", "cyan"), (proxy["url"], "")),
+        Text.assemble(("🌐 Upstream: ", "cyan"), (payload["upstream"], "")),
+    ]
+    console.print(Panel(Group(*proxy_lines), title="Proxy", border_style=proxy_color))
+    console.print()
+
+    keys = payload["keys"]
+    keys_ok = keys["blocked"] == 0 and keys["exhausted"] == 0
+    keys_warn = keys["disabled"] > 0
+    keys_emoji, keys_color = _status_badge(keys_ok, warn=keys_warn)
+    keys_lines = [
+        Text.assemble(
+            (f"{keys_emoji} ", keys_color),
+            ("Keys: ", "bold"),
+            ("total={total} disabled={disabled} blocked={blocked} exhausted={exhausted}".format(**keys), ""),
+        ),
+        Text.assemble(("🔑 Active key: ", "cyan"), (payload["active_key"], "")),
+    ]
+    console.print(Panel(Group(*keys_lines), title="Keys", border_style=keys_color))
+    console.print()
+
+    rotation = payload["rotation"]
+    policy = payload["policy"]
+    rotation_lines = [
+        Text.assemble(
+            ("🔁 Rotation: ", "cyan"),
+            (
+                f"active_index={rotation['active_index']} rotation_index={rotation['rotation_index']} "
+                f"auto_rotate={rotation['auto_rotate']}",
+                "",
+            ),
+        ),
+        Text.assemble(
+            ("🛡️ Policy: ", "cyan"),
+            (
+                "strict_usage_check="
+                f"{'on' if policy['strict_usage_check'] else 'off'} "
+                f"fail_open_on_empty_cache={'on' if policy['fail_open_on_empty_cache'] else 'off'}",
+                "",
+            ),
+        ),
+    ]
+    console.print(Panel(Group(*rotation_lines), title="Rotation & Policy", border_style="blue"))
+    console.print()
+
+    cache = payload["cache"]
+    last_refresh = payload["last_health_refresh"]
+    refresh_ok = last_refresh is not None
+    refresh_emoji, refresh_color = _status_badge(refresh_ok, warn=not refresh_ok)
+    cache_lines = [
+        Text.assemble(
+            ("🧠 Cache: ", "cyan"),
+            (
+                "usage_refresh="
+                f"{cache['usage_refresh_seconds']}s "
+                f"blocklist_recheck={cache['blocklist_recheck_seconds']}s "
+                f"blocklist_max={cache['blocklist_max']}",
+                "",
+            ),
+        ),
+        Text.assemble(("💳 Payment block: ", "cyan"), (f"{payload['payment_block_seconds']}s", "")),
+        Text.assemble((f"{refresh_emoji} ", refresh_color), ("Health refresh: ", "bold"), (last_refresh or "never", "")),
+    ]
+    console.print(Panel(Group(*cache_lines), title="Cache & Health", border_style=refresh_color))
+    console.print()
+
+    log_line = Text.assemble(("🧾 Daemon log: ", "cyan"), (proxy["daemon_log"], ""))
+    console.print(Panel(Group(log_line), title="Logs", border_style="blue"))
+
+    alerts: list[Text] = []
+    if not proxy["running"]:
+        alerts.append(Text("Proxy is not running.", style="red"))
+    if keys["blocked"] > 0:
+        alerts.append(Text(f"{keys['blocked']} key(s) blocked (payment/auth).", style="red"))
+    if keys["exhausted"] > 0:
+        alerts.append(Text(f"{keys['exhausted']} key(s) exhausted (cooldown).", style="red"))
+    if not refresh_ok:
+        alerts.append(Text("No health refresh recorded yet.", style="yellow"))
+    if alerts:
+        console.print()
+        console.print(Panel(Group(*alerts), title="Alerts", border_style="red"))
 
 
 @app.callback(invoke_without_command=True)
@@ -346,21 +529,76 @@ def main() -> None:
 
 
 @app.command()
-def proxy() -> None:
+def proxy(
+    daemon: bool = typer.Option(
+        True,
+        "--daemon/--foreground",
+        help="Run in background (default) or keep in foreground.",
+    ),
+) -> None:
     """Start the local proxy server."""
     config = _load_config_or_exit()
     _note_mode(config)
-    registry = _load_registry_or_exit(config)
-    state = load_state(config, registry)
+    _ensure_proxy_port_free(config)
     scheme = "https" if config.proxy_tls_terminated else "http"
-    typer.echo(f"Starting proxy at {scheme}://{config.proxy_listen}{config.proxy_base_path}")
+    typer.echo(f"🚀 Starting proxy at {scheme}://{config.proxy_listen}{config.proxy_base_path}")
     if config.proxy_require_tls and not config.proxy_tls_terminated:
         typer.echo("Note: TLS termination required for remote access (set KMI_PROXY_TLS_TERMINATED=1).")
+    if daemon:
+        _load_registry_or_exit(config)
+        _start_proxy_daemon(config)
+        raise typer.Exit()
+    registry = _load_registry_or_exit(config)
+    state = load_state(config, registry)
     try:
         run_proxy(config, registry, state)
     except ValueError as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1)
+
+
+@app.command("proxy-stop")
+def proxy_stop(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Stop without confirmation."),
+    force: bool = typer.Option(False, "--force", "-f", help="Force kill (SIGKILL)."),
+) -> None:
+    """Stop the proxy process listening on KMI_PROXY_LISTEN."""
+    config = _load_config_or_exit()
+    stopped = _stop_proxy(config, yes=yes, force=force)
+    if not stopped:
+        raise typer.Exit(code=1)
+
+
+@app.command("proxy-logs")
+def proxy_logs(
+    follow: bool = typer.Option(True, "--follow/--no-follow", help="Follow logs (tail -f)."),
+    lines: int = typer.Option(200, "--lines", "-n", help="Number of lines to show."),
+    daemon: bool = typer.Option(True, "--daemon/--app", help="Show proxy daemon logs or app logs."),
+    since: str = typer.Option("", "--since", help="Filter app logs since time (e.g. 10m, 1h, 2026-02-02T12:00:00Z)."),
+    sleep_seconds: float = typer.Option(0.5, "--sleep", help="Follow poll interval in seconds."),
+) -> None:
+    """Tail proxy logs (daemon stdout/stderr or app logs)."""
+    config = _load_config_or_exit()
+    path = _proxy_daemon_log_path(config) if daemon else _app_log_path(config)
+    since_dt = _parse_since(since)
+    if since and since_dt is None:
+        typer.echo("Invalid --since value. Use 10m/1h/30s or ISO timestamp (e.g. 2026-02-02T12:00:00Z).")
+        raise typer.Exit(code=2)
+    if daemon and since_dt is not None:
+        typer.echo("Note: --since works only with --app logs; ignoring filter.")
+        since_dt = None
+    _tail_file(path, lines=lines, follow=follow, sleep_seconds=sleep_seconds, since=since_dt, json_lines=not daemon)
+
+
+@app.command("proxy-restart")
+def proxy_restart(
+    yes: bool = typer.Option(True, "--yes", "-y", help="Stop without confirmation."),
+    force: bool = typer.Option(False, "--force", "-f", help="Force kill (SIGKILL)."),
+) -> None:
+    """Restart the local proxy server."""
+    config = _load_config_or_exit()
+    _stop_proxy(config, yes=yes, force=force)
+    proxy()
 
 
 def _proxy_listening(host: str, port: int) -> bool:
@@ -375,6 +613,221 @@ def _normalize_connect_host(host: str) -> str:
     if host in {"0.0.0.0", "::"}:
         return "127.0.0.1"
     return host
+
+
+def _proxy_base_url(config: Config) -> str:
+    host, port = parse_listen(config.proxy_listen)
+    host = _normalize_connect_host(host)
+    scheme = "https" if config.proxy_tls_terminated else "http"
+    return f"{scheme}://{host}:{port}{config.proxy_base_path}"
+
+
+def _proxy_daemon_log_path(config: Config) -> Path:
+    log_dir = config.state_dir.expanduser() / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir / "proxy.out"
+
+
+def _app_log_path(config: Config) -> Path:
+    log_dir = config.state_dir.expanduser() / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir / "kmi.log"
+
+
+def _read_tail_lines(path: Path, limit: int) -> list[str]:
+    if limit <= 0 or not path.exists():
+        return []
+    buffer: list[str] = []
+    from collections import deque
+
+    tail = deque(maxlen=limit)
+    with path.open("rb") as handle:
+        for line in handle:
+            tail.append(line.decode("utf-8", errors="ignore").rstrip("\n"))
+    buffer.extend(tail)
+    return buffer
+
+
+def _parse_log_timestamp(value: str) -> Optional[datetime]:
+    if not value:
+        return None
+    parsed = parse_iso_timestamp(value)
+    if parsed:
+        return parsed
+    try:
+        return datetime.strptime(value.strip(), "%Y-%m-%d %H:%M:%S %z")
+    except ValueError:
+        return None
+
+
+def _parse_since(value: str) -> Optional[datetime]:
+    if not value:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    if raw[-1].lower() in {"s", "m", "h", "d"} and raw[:-1].isdigit():
+        amount = int(raw[:-1])
+        unit = raw[-1].lower()
+        seconds = amount
+        if unit == "m":
+            seconds *= 60
+        elif unit == "h":
+            seconds *= 3600
+        elif unit == "d":
+            seconds *= 86400
+        return datetime.now(timezone.utc) - timedelta(seconds=seconds)
+    parsed = _parse_log_timestamp(raw)
+    return parsed
+
+
+def _filter_lines_since(lines: list[str], since: Optional[datetime], json_lines: bool) -> list[str]:
+    if since is None:
+        return lines
+    filtered: list[str] = []
+    for line in lines:
+        ts_value = None
+        if json_lines:
+            try:
+                payload = json.loads(line)
+                ts_value = payload.get("ts")
+            except Exception:
+                ts_value = None
+        else:
+            ts_value = None
+        if ts_value is None:
+            continue
+        parsed = _parse_log_timestamp(str(ts_value))
+        if parsed is None:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        if parsed >= since:
+            filtered.append(line)
+    return filtered
+
+
+def _tail_file(
+    path: Path,
+    lines: int,
+    follow: bool,
+    sleep_seconds: float,
+    since: Optional[datetime],
+    json_lines: bool,
+) -> None:
+    if not path.exists():
+        typer.echo(f"Log file not found: {path}")
+        raise typer.Exit(code=1)
+    for line in _filter_lines_since(_read_tail_lines(path, lines), since, json_lines):
+        typer.echo(line)
+    if not follow:
+        return
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        while True:
+            data = handle.readline()
+            if data:
+                line = data.decode("utf-8", errors="ignore").rstrip("\n")
+                if since is None:
+                    typer.echo(line)
+                else:
+                    filtered = _filter_lines_since([line], since, json_lines)
+                    if filtered:
+                        typer.echo(filtered[0])
+                continue
+            time.sleep(max(sleep_seconds, 0.1))
+
+
+def _start_proxy_daemon(config: Config) -> None:
+    kmi_bin = shutil.which("kmi")
+    if not kmi_bin:
+        typer.echo("❌ 'kmi' executable not found in PATH; cannot start daemon.")
+        raise typer.Exit(code=1)
+    log_path = _proxy_daemon_log_path(config)
+    handle = log_path.open("a", encoding="utf-8")
+    proc = subprocess.Popen(
+        [kmi_bin, "proxy", "--foreground"],
+        stdout=handle,
+        stderr=handle,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    handle.close()
+    typer.echo("✅ Proxy started in background (daemon).")
+    typer.echo(f"PID: {proc.pid}")
+    typer.echo(f"Logs: {log_path}")
+    typer.echo("Stop: kmi proxy-stop")
+
+
+def _ensure_proxy_port_free(config: Config) -> None:
+    host, port = parse_listen(config.proxy_listen)
+    connect_host = _normalize_connect_host(host)
+    typer.echo(f"🩺 Doctor: checking {connect_host}:{port}")
+    if not _proxy_listening(connect_host, port):
+        typer.echo("✅ No existing listener detected.")
+        return
+    typer.echo(f"⚠️ Existing listener detected on {connect_host}:{port}")
+    pids = _find_listening_pids(port)
+    if pids is None:
+        typer.echo("❌ 'lsof' not available; cannot auto-stop. Use Ctrl+C or kmi proxy-stop.")
+        raise typer.Exit(code=1)
+    typer.echo(f"🛑 Stopping PID(s): {', '.join(str(pid) for pid in pids)}")
+    _terminate_pids(pids, force=False)
+    time.sleep(0.5)
+    if _proxy_listening(connect_host, port):
+        typer.echo("⚠️ Still listening, forcing kill.")
+        _terminate_pids(pids, force=True)
+        time.sleep(0.5)
+    if _proxy_listening(connect_host, port):
+        typer.echo("❌ Port still in use. Stop manually and retry.")
+        raise typer.Exit(code=1)
+    typer.echo("✅ Old listener stopped.")
+
+
+def _find_listening_pids(port: int) -> list[int] | None:
+    lsof = shutil.which("lsof")
+    if not lsof:
+        return None
+    result = subprocess.run(
+        [lsof, "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    pids: list[int] = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            pids.append(int(line))
+        except ValueError:
+            continue
+    return sorted(set(pids))
+
+
+def _terminate_pids(pids: list[int], force: bool) -> None:
+    sig = signal.SIGKILL if force else signal.SIGTERM
+    for pid in pids:
+        os.kill(pid, sig)
+
+
+def _stop_proxy(config: Config, *, yes: bool, force: bool) -> bool:
+    host, port = parse_listen(config.proxy_listen)
+    pids = _find_listening_pids(port)
+    if pids is None:
+        typer.echo("Unable to find proxy PID because 'lsof' is not available.")
+        typer.echo("Stop it manually (Ctrl+C in the proxy terminal), or install lsof.")
+        return False
+    if not pids:
+        typer.echo(f"No process is listening on {host}:{port}.")
+        return False
+    typer.echo(f"Found listener(s) on {host}:{port}: {', '.join(str(pid) for pid in pids)}")
+    if not yes and not typer.confirm("Stop these process(es)?"):
+        return False
+    _terminate_pids(pids, force)
+    typer.echo("Proxy stopped.")
+    return True
 
 
 def _read_new_trace_entries(path: Path, offset: int) -> tuple[list[dict], int]:
@@ -546,6 +999,48 @@ def trace() -> None:
     run_trace_tui(config)
 
 
+@app.command()
+def doctor(
+    plain: bool = typer.Option(False, "--plain", help="Disable rich formatting (plain text)."),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable ANSI colors (NO_COLOR)."),
+    recheck_keys: bool = typer.Option(
+        False,
+        "--recheck-keys",
+        help="Recheck blocked keys via /usages and clear if healthy (live call).",
+    ),
+    clear_blocklist: bool = typer.Option(
+        False,
+        "--clear-blocklist",
+        help="Clear blocked keys without checks.",
+    ),
+) -> None:
+    """Run diagnostics and show a doctor report."""
+    _apply_output_flags(plain, no_color)
+    if recheck_keys and clear_blocklist:
+        raise typer.BadParameter("Choose only one: --recheck-keys or --clear-blocklist.")
+    config = _load_config_or_exit()
+    exit_code = run_doctor(config, recheck_keys=recheck_keys, clear_blocklist=clear_blocklist)
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
+
+
+@app.command("kimi", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def kimi_proxy(ctx: typer.Context) -> None:
+    """Run kimi CLI with proxy env injected."""
+    config = _load_config_or_exit()
+    kimi_bin = shutil.which("kimi")
+    if not kimi_bin:
+        typer.echo("kimi executable not found in PATH.")
+        raise typer.Exit(code=1)
+    if config.proxy_token:
+        typer.echo("Warning: KMI_PROXY_TOKEN is set; kimi CLI does not send proxy auth headers.")
+    env = os.environ.copy()
+    env["KIMI_BASE_URL"] = _proxy_base_url(config)
+    env["KIMI_API_KEY"] = "proxy"
+    result = subprocess.run([kimi_bin, *ctx.args], env=env)
+    raise typer.Exit(code=result.returncode)
+
+
 @rotate_app.callback(invoke_without_command=True)
 def rotate_callback(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand:
@@ -595,7 +1090,9 @@ app.add_typer(rotate_app, name="rotate")
 
 
 @app.command()
-def status() -> None:
+def status(
+    json_output: bool = typer.Option(False, "--json", help="Output status as JSON."),
+) -> None:
     """Show current rotation status."""
     config = _load_config_or_exit()
-    _render_status(config)
+    _render_status(config, as_json=json_output)

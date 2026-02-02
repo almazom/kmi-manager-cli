@@ -29,6 +29,7 @@ dev = [
 
 [project.scripts]
 kmi = "kmi_manager_cli.cli:main"
+kimi_robin = "kmi_manager_cli.robin:main"
 
 [tool.pytest.ini_options]
 addopts = "-q"
