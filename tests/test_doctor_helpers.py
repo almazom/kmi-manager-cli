@@ -8,6 +8,11 @@ from kmi_manager_cli import doctor as doctor_module
 from kmi_manager_cli.config import Config
 from kmi_manager_cli.health import Usage
 from kmi_manager_cli.keys import KeyRecord, Registry
+from kmi_manager_cli.proxy_utils import (
+    normalize_connect_host,
+    proxy_base_url,
+    proxy_listening,
+)
 from kmi_manager_cli.state import KeyState, State
 
 
@@ -52,11 +57,11 @@ def test_proxy_listening_true(monkeypatch) -> None:
             return None
 
     monkeypatch.setattr(doctor_module.socket, "create_connection", lambda *_a, **_k: DummySocket())
-    assert doctor_module._proxy_listening("127.0.0.1", 1234) is True
+    assert proxy_listening("127.0.0.1", 1234) is True
 
 
 def test_normalize_connect_host() -> None:
-    assert doctor_module._normalize_connect_host("0.0.0.0") == "127.0.0.1"
+    assert normalize_connect_host("0.0.0.0") == "127.0.0.1"
 
 
 def test_file_status_missing(tmp_path: Path) -> None:
@@ -121,7 +126,7 @@ def test_check_proxy_failures(monkeypatch, tmp_path: Path) -> None:
     check = doctor_module._check_proxy(config)
     assert check.status == "fail"
 
-    monkeypatch.setattr(doctor_module, "_proxy_listening", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(doctor_module, "proxy_listening", lambda *_args, **_kwargs: False)
     config = Config(
         **{
             **config.__dict__,
@@ -136,7 +141,7 @@ def test_check_proxy_failures(monkeypatch, tmp_path: Path) -> None:
 
 def test_check_proxy_ok_when_listening(monkeypatch, tmp_path: Path) -> None:
     config = _make_config(tmp_path)
-    monkeypatch.setattr(doctor_module, "_proxy_listening", lambda *_a, **_k: True)
+    monkeypatch.setattr(doctor_module, "proxy_listening", lambda *_a, **_k: True)
     check = doctor_module._check_proxy(config)
     assert check.status == "ok"
 
@@ -150,14 +155,14 @@ def test_check_kimi_env(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("KIMI_BASE_URL", "https://wrong")
     assert doctor_module._check_kimi_env(config).status == "warn"
 
-    monkeypatch.setenv("KIMI_BASE_URL", doctor_module._proxy_base_url(config))
+    monkeypatch.setenv("KIMI_BASE_URL", proxy_base_url(config))
     monkeypatch.setenv("KIMI_API_KEY", "proxy")
     assert doctor_module._check_kimi_env(config).status == "ok"
 
 
 def test_check_kimi_env_missing_api_key(monkeypatch, tmp_path: Path) -> None:
     config = _make_config(tmp_path)
-    monkeypatch.setenv("KIMI_BASE_URL", doctor_module._proxy_base_url(config))
+    monkeypatch.setenv("KIMI_BASE_URL", proxy_base_url(config))
     monkeypatch.delenv("KIMI_API_KEY", raising=False)
     assert doctor_module._check_kimi_env(config).status == "warn"
 

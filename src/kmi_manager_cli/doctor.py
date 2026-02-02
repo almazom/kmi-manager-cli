@@ -20,6 +20,11 @@ from kmi_manager_cli.logging import get_logger
 from kmi_manager_cli.rotation import clear_blocked, is_blocked
 from kmi_manager_cli.security import is_insecure_permissions
 from kmi_manager_cli.state import load_state, save_state
+from kmi_manager_cli.proxy_utils import (
+    normalize_connect_host,
+    proxy_base_url,
+    proxy_listening,
+)
 from kmi_manager_cli.ui import get_console
 
 
@@ -41,27 +46,6 @@ _STATUS_META = {
 
 def _status_badge(status: str) -> tuple[str, str]:
     return _STATUS_META.get(status, ("•", "white"))
-
-
-def _proxy_listening(host: str, port: int) -> bool:
-    try:
-        with socket.create_connection((host, port), timeout=0.5):
-            return True
-    except OSError:
-        return False
-
-
-def _normalize_connect_host(host: str) -> str:
-    if host in {"0.0.0.0", "::"}:
-        return "127.0.0.1"
-    return host
-
-
-def _proxy_base_url(config: Config) -> str:
-    host, port = config.proxy_listen.rsplit(":", 1)
-    host = _normalize_connect_host(host)
-    scheme = "https" if config.proxy_tls_terminated else "http"
-    return f"{scheme}://{host}:{port}{config.proxy_base_path}"
 
 
 def _format_age(seconds: float) -> str:
@@ -118,7 +102,7 @@ def _check_auths(config: Config) -> DoctorCheck:
 
 def _check_proxy(config: Config) -> DoctorCheck:
     host, port = config.proxy_listen.rsplit(":", 1)
-    connect_host = _normalize_connect_host(host)
+    connect_host = normalize_connect_host(host)
     if (
         connect_host not in {"127.0.0.1", "localhost", "::1"}
         and not config.proxy_allow_remote
@@ -147,7 +131,7 @@ def _check_proxy(config: Config) -> DoctorCheck:
             "remote bind requires KMI_PROXY_TOKEN",
             "Set KMI_PROXY_TOKEN or use localhost.",
         )
-    listening = _proxy_listening(connect_host, int(port))
+    listening = proxy_listening(connect_host, int(port))
     if listening:
         return DoctorCheck("Proxy", "ok", f"listening on {connect_host}:{port}")
     return DoctorCheck(
@@ -156,7 +140,7 @@ def _check_proxy(config: Config) -> DoctorCheck:
 
 
 def _check_kimi_env(config: Config) -> DoctorCheck:
-    expected = _proxy_base_url(config)
+    expected = proxy_base_url(config)
     actual = os.getenv("KIMI_BASE_URL", "")
     api_key = os.getenv("KIMI_API_KEY", "")
     if not actual:

@@ -41,6 +41,13 @@ from kmi_manager_cli.health import get_accounts_health, get_health_map
 from kmi_manager_cli.keys import load_auths_dir
 from kmi_manager_cli.logging import get_logger
 from kmi_manager_cli.proxy import parse_listen, run_proxy
+from kmi_manager_cli.proxy_utils import (
+    normalize_connect_host,
+    proxy_base_url,
+    proxy_daemon_log_path,
+    proxy_listening,
+    proxy_pid_path,
+)
 from kmi_manager_cli.rotation import is_blocked, is_exhausted, rotate_manual
 from kmi_manager_cli.state import load_state, save_state
 from kmi_manager_cli.time_utils import parse_iso_timestamp
@@ -307,8 +314,8 @@ def _build_status_payload(config, registry, state) -> dict:
     exhausted = sum(1 for key in registry.keys if is_exhausted(state, key.label))
 
     host, port = parse_listen(config.proxy_listen)
-    connect_host = _normalize_connect_host(host)
-    listening = _proxy_listening(connect_host, port)
+    connect_host = normalize_connect_host(host)
+    listening = proxy_listening(connect_host, port)
     pids = _find_listening_pids(port) if listening else None
 
     return {
@@ -317,9 +324,9 @@ def _build_status_payload(config, registry, state) -> dict:
             "running": listening,
             "host": connect_host,
             "port": port,
-            "url": _proxy_base_url(config),
+            "url": proxy_base_url(config),
             "pids": pids,
-            "daemon_log": str(_proxy_daemon_log_path(config)),
+            "daemon_log": str(proxy_daemon_log_path(config)),
         },
         "upstream": config.upstream_base_url,
         "keys": {
@@ -645,7 +652,7 @@ def proxy_logs(
 ) -> None:
     """Tail proxy logs (daemon stdout/stderr or app logs)."""
     config = _load_config_or_exit()
-    path = _proxy_daemon_log_path(config) if daemon else _app_log_path(config)
+    path = proxy_daemon_log_path(config) if daemon else _app_log_path(config)
     since_dt = _parse_since(since)
     if since and since_dt is None:
         typer.echo(
@@ -674,39 +681,6 @@ def proxy_restart(
     config = _load_config_or_exit()
     _stop_proxy(config, yes=yes, force=force)
     proxy()
-
-
-def _proxy_listening(host: str, port: int) -> bool:
-    try:
-        with socket.create_connection((host, port), timeout=0.5):
-            return True
-    except OSError:
-        return False
-
-
-def _normalize_connect_host(host: str) -> str:
-    if host in {"0.0.0.0", "::"}:
-        return "127.0.0.1"
-    return host
-
-
-def _proxy_base_url(config: Config) -> str:
-    host, port = parse_listen(config.proxy_listen)
-    host = _normalize_connect_host(host)
-    scheme = "https" if config.proxy_tls_terminated else "http"
-    return f"{scheme}://{host}:{port}{config.proxy_base_path}"
-
-
-def _proxy_daemon_log_path(config: Config) -> Path:
-    log_dir = config.state_dir.expanduser() / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    return log_dir / "proxy.out"
-
-
-def _proxy_pid_path(config: Config) -> Path:
-    pid_dir = config.state_dir.expanduser()
-    pid_dir.mkdir(parents=True, exist_ok=True)
-    return pid_dir / "proxy.pid"
 
 
 def _app_log_path(config: Config) -> Path:
@@ -826,7 +800,7 @@ def _start_proxy_daemon(config: Config) -> None:
     if not kmi_bin:
         typer.echo("❌ 'kmi' executable not found in PATH; cannot start daemon.")
         raise typer.Exit(code=1)
-    log_path = _proxy_daemon_log_path(config)
+    log_path = proxy_daemon_log_path(config)
     handle = log_path.open("a", encoding="utf-8")
     proc = subprocess.Popen(
         [kmi_bin, "proxy", "--foreground"],
@@ -836,22 +810,22 @@ def _start_proxy_daemon(config: Config) -> None:
         start_new_session=True,
     )
     handle.close()
-    pid_path = _proxy_pid_path(config)
+    pid_path = proxy_pid_path(config)
     try:
         pid_path.write_text(str(proc.pid), encoding="utf-8")
     except OSError:
         typer.echo("⚠️ Unable to write proxy PID file; proxy-stop may be unsafe.")
     typer.echo("✅ Proxy started in background (daemon).")
     typer.echo(f"PID: {proc.pid}")
-    typer.echo(f"Logs: {log_path}")
+    typer.echo(f"Logs: {proxy_daemon_log_path(config)}")
     typer.echo("Stop: kmi proxy-stop")
 
 
 def _ensure_proxy_port_free(config: Config) -> None:
     host, port = parse_listen(config.proxy_listen)
-    connect_host = _normalize_connect_host(host)
+    connect_host = normalize_connect_host(host)
     typer.echo(f"🩺 Doctor: checking {connect_host}:{port}")
-    if not _proxy_listening(connect_host, port):
+    if not proxy_listening(connect_host, port):
         typer.echo("✅ No existing listener detected.")
         return
     typer.echo(f"⚠️ Existing listener detected on {connect_host}:{port}")
@@ -864,11 +838,11 @@ def _ensure_proxy_port_free(config: Config) -> None:
     typer.echo(f"🛑 Stopping PID(s): {', '.join(str(pid) for pid in pids)}")
     _terminate_pids(pids, force=False)
     time.sleep(0.5)
-    if _proxy_listening(connect_host, port):
+    if proxy_listening(connect_host, port):
         typer.echo("⚠️ Still listening, forcing kill.")
         _terminate_pids(pids, force=True)
         time.sleep(0.5)
-    if _proxy_listening(connect_host, port):
+    if proxy_listening(connect_host, port):
         typer.echo("❌ Port still in use. Stop manually and retry.")
         raise typer.Exit(code=1)
     typer.echo("✅ Old listener stopped.")
@@ -904,7 +878,7 @@ def _terminate_pids(pids: list[int], force: bool) -> None:
 
 def _stop_proxy(config: Config, *, yes: bool, force: bool) -> bool:
     host, port = parse_listen(config.proxy_listen)
-    pid_path = _proxy_pid_path(config)
+    pid_path = proxy_pid_path(config)
     if pid_path.exists():
         try:
             pid = int(pid_path.read_text(encoding="utf-8").strip())
@@ -1002,9 +976,9 @@ def _run_e2e(
 
     registry = _load_registry_or_exit(config)
     host, port = parse_listen(config.proxy_listen)
-    connect_host = _normalize_connect_host(host)
+    connect_host = normalize_connect_host(host)
     started_proc = None
-    if not _proxy_listening(connect_host, port):
+    if not proxy_listening(connect_host, port):
         typer.echo("Proxy is not running; starting it now...")
         try:
             started_proc = subprocess.Popen(
@@ -1017,9 +991,9 @@ def _run_e2e(
             raise typer.Exit(code=1)
         for _ in range(20):
             time.sleep(0.5)
-            if _proxy_listening(connect_host, port):
+            if proxy_listening(connect_host, port):
                 break
-    if not _proxy_listening(connect_host, port):
+    if not proxy_listening(connect_host, port):
         typer.echo("Proxy did not start or is not reachable.")
         if started_proc:
             started_proc.terminate()
@@ -1188,7 +1162,7 @@ def kimi_proxy(ctx: typer.Context) -> None:
             "Warning: KMI_PROXY_TOKEN is set; kimi CLI does not send proxy auth headers."
         )
     env = os.environ.copy()
-    env["KIMI_BASE_URL"] = _proxy_base_url(config)
+    env["KIMI_BASE_URL"] = proxy_base_url(config)
     env["KIMI_API_KEY"] = "proxy"
     result = subprocess.run([kimi_bin, *ctx.args], env=env)
     raise typer.Exit(code=result.returncode)

@@ -111,7 +111,7 @@ def test_proxy_auto_stops_existing_listener(monkeypatch, tmp_path) -> None:
     def fake_terminate(_pids, force=False):
         calls["terminate"] += 1
 
-    monkeypatch.setattr("kmi_manager_cli.cli._proxy_listening", fake_listening)
+    monkeypatch.setattr("kmi_manager_cli.cli.proxy_listening", fake_listening)
     monkeypatch.setattr("kmi_manager_cli.cli._find_listening_pids", fake_find)
     monkeypatch.setattr("kmi_manager_cli.cli._terminate_pids", fake_terminate)
     monkeypatch.setattr("kmi_manager_cli.cli.run_proxy", lambda *_args, **_kwargs: None)
