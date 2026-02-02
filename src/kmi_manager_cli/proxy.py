@@ -22,8 +22,8 @@ from kmi_manager_cli.config import Config
 from kmi_manager_cli.errors import remediation_message
 from kmi_manager_cli.keys import Registry
 from kmi_manager_cli.logging import get_logger, log_event
-from kmi_manager_cli.health import get_health_map
-from kmi_manager_cli.rotation import mark_exhausted, select_key_for_request
+from kmi_manager_cli.health import fetch_usage, get_health_map
+from kmi_manager_cli.rotation import clear_blocked, is_blocked, mark_blocked, mark_exhausted, select_key_for_request
 from kmi_manager_cli.state import State, record_request, save_state
 from kmi_manager_cli.trace import append_trace, trace_now_str
 
@@ -40,6 +40,48 @@ _HOP_BY_HOP_HEADERS = {
     "trailers",
     "transfer-encoding",
     "upgrade",
+}
+
+_PAYMENT_ERROR_TOKENS = (
+    "payment",
+    "payment_required",
+    "natpament",
+    "notpayment",
+    "billing",
+    "balance",
+    "insufficient_balance",
+    "insufficient_quota",
+    "balance_insufficient",
+    "credit",
+    "subscription",
+    "plan",
+    "top up",
+    "top-up",
+    "recharge",
+    "\u4f59\u989d\u4e0d\u8db3",
+    "\u8d26\u6237\u4f59\u989d\u4e0d\u8db3",
+    "\u8bf7\u5145\u503c",
+    "\u5145\u503c",
+    "\u6b20\u8d39",
+    "\u672a\u4ed8\u8d39",
+    "\u672a\u652f\u4ed8",
+    "\u8ba2\u9605",
+    "\u5957\u9910",
+)
+_ERROR_FIELDS = {
+    "error",
+    "message",
+    "code",
+    "error_code",
+    "errorcode",
+    "err_code",
+    "errcode",
+    "type",
+    "detail",
+    "title",
+    "status",
+    "status_code",
+    "reason",
 }
 
 
@@ -104,13 +146,22 @@ def _trim_prompt(text: str, max_words: int = 6, max_chars: int = 60) -> str:
     return trimmed
 
 
-def _extract_prompt_hint(body: bytes, content_type: str) -> str:
-    if not body or "json" not in content_type.lower():
+def _first_word(text: str) -> str:
+    if not text:
         return ""
+    cleaned = " ".join(text.split())
+    if not cleaned:
+        return ""
+    return cleaned.split(" ", 1)[0]
+
+
+def _extract_prompt_meta(body: bytes, content_type: str) -> tuple[str, str]:
+    if not body or "json" not in content_type.lower():
+        return "", ""
     try:
         payload = json.loads(body.decode("utf-8", errors="ignore"))
     except (json.JSONDecodeError, UnicodeDecodeError):
-        return ""
+        return "", ""
     text = ""
     if isinstance(payload, dict):
         messages = payload.get("messages")
@@ -125,12 +176,73 @@ def _extract_prompt_hint(body: bytes, content_type: str) -> str:
                 if isinstance(payload.get(key), str):
                     text = payload.get(key, "")
                     break
-    return _trim_prompt(text)
+    if not text:
+        return "", ""
+    return _trim_prompt(text), _first_word(text)
 
 
 def _parse_retry_after(value: Optional[str]) -> Optional[int]:
     if not value:
         return None
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        seconds = int(value)
+        return max(0, seconds)
+    except ValueError:
+        try:
+            dt = parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        delta = int((dt - datetime.now(timezone.utc)).total_seconds())
+        return max(0, delta)
+
+
+def _collect_error_strings(payload: object, bucket: list[str]) -> None:
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            key_lower = str(key).lower()
+            if key_lower in _ERROR_FIELDS:
+                _collect_error_strings(value, bucket)
+                continue
+            if isinstance(value, str) and key_lower.startswith("error"):
+                bucket.append(value)
+        return
+    if isinstance(payload, list):
+        for item in payload:
+            _collect_error_strings(item, bucket)
+        return
+    if isinstance(payload, (str, int, float)):
+        bucket.append(str(payload))
+
+
+def _extract_error_hint(content: bytes, content_type: str) -> str:
+    if not content:
+        return ""
+    text = content.decode("utf-8", errors="ignore").strip()
+    if not text:
+        return ""
+    if "json" in (content_type or "").lower() or text.startswith("{"):
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return text
+        parts: list[str] = []
+        _collect_error_strings(payload, parts)
+        return " ".join(parts) if parts else text
+    return text
+
+
+def _looks_like_payment_error(status_code: int, hint: str) -> bool:
+    if status_code == 402:
+        return True
+    if status_code not in {400, 403}:
+        return False
+    lowered = hint.lower()
+    return any(token in lowered for token in _PAYMENT_ERROR_TOKENS)
     value = value.strip()
     if not value:
         return None
@@ -154,14 +266,76 @@ async def _close_stream(stream_ctx, client: httpx.AsyncClient) -> None:
     await client.aclose()
 
 
-def _get_cached_health(ctx: ProxyContext, ttl_seconds: int = 60) -> dict[str, "HealthInfo"]:
+def _get_cached_health(ctx: ProxyContext) -> dict[str, "HealthInfo"]:
+    return ctx.health_cache
+
+
+async def _maybe_refresh_health(ctx: ProxyContext) -> None:
+    interval = ctx.config.usage_cache_seconds
+    if interval <= 0:
+        return
     now = time.time()
-    if ctx.health_cache and (now - ctx.health_cache_ts) < ttl_seconds:
-        return ctx.health_cache
-    health = get_health_map(ctx.config, ctx.registry, ctx.state)
+    if ctx.health_cache_ts and (now - ctx.health_cache_ts) < interval:
+        return
+    health = await asyncio.to_thread(get_health_map, ctx.config, ctx.registry, ctx.state)
     ctx.health_cache = health
     ctx.health_cache_ts = now
-    return health
+    async with ctx.state_lock:
+        ctx.state.last_health_refresh = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    await ctx.state_writer.mark_dirty()
+
+
+async def _maybe_recheck_blocked(ctx: ProxyContext) -> None:
+    interval = ctx.config.blocklist_recheck_seconds
+    if interval <= 0:
+        return
+    now = time.time()
+    if (now - ctx.blocklist_recheck_ts) < interval:
+        return
+    ctx.blocklist_recheck_ts = now
+
+    candidates: list[tuple[str, str]] = []
+    async with ctx.state_lock:
+        for key in ctx.registry.keys:
+            if not is_blocked(ctx.state, key.label):
+                continue
+            candidates.append((key.label, key.api_key))
+            if ctx.config.blocklist_recheck_max > 0 and len(candidates) >= ctx.config.blocklist_recheck_max:
+                break
+
+    if not candidates:
+        return
+
+    cleared: list[str] = []
+    for label, api_key in candidates:
+        usage = await asyncio.to_thread(
+            fetch_usage,
+            ctx.config.upstream_base_url,
+            api_key,
+            False,
+            get_logger(ctx.config),
+            label,
+        )
+        if usage is not None:
+            cleared.append(label)
+
+    if not cleared:
+        return
+
+    async with ctx.state_lock:
+        for label in cleared:
+            clear_blocked(ctx.state, label)
+    await ctx.state_writer.mark_dirty()
+
+
+async def _health_refresh_loop(ctx: ProxyContext) -> None:
+    while not ctx.health_stop.is_set():
+        await _maybe_refresh_health(ctx)
+        await _maybe_recheck_blocked(ctx)
+        try:
+            await asyncio.wait_for(ctx.health_stop.wait(), timeout=1.0)
+        except asyncio.TimeoutError:
+            continue
 
 
 @dataclass
@@ -176,6 +350,9 @@ class ProxyContext:
     trace_writer: "TraceWriter"
     health_cache: dict[str, "HealthInfo"] = field(default_factory=dict)
     health_cache_ts: float = 0.0
+    blocklist_recheck_ts: float = 0.0
+    health_stop: asyncio.Event = field(default_factory=asyncio.Event)
+    health_task: Optional[asyncio.Task] = None
 
 
 @dataclass
@@ -343,8 +520,16 @@ def _build_upstream_url(config: Config, path: str, query: str) -> str:
 
 def _select_key(ctx: ProxyContext) -> Optional[tuple[str, str]]:
     auto_rotate = ctx.state.auto_rotate and ctx.config.auto_rotate_allowed
-    health = _get_cached_health(ctx) if auto_rotate else None
-    key = select_key_for_request(ctx.registry, ctx.state, auto_rotate, health=health)
+    require_usage = ctx.config.require_usage_before_request
+    health = _get_cached_health(ctx) if (auto_rotate or require_usage) else None
+    key = select_key_for_request(
+        ctx.registry,
+        ctx.state,
+        auto_rotate,
+        health=health,
+        require_usage_ok=require_usage,
+        fail_open_on_empty_cache=ctx.config.fail_open_on_empty_cache,
+    )
     if not key:
         return None
     return key.label, key.api_key
@@ -388,17 +573,18 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
     async def lifespan(_: FastAPI):
         await ctx.state_writer.start()
         await ctx.trace_writer.start()
+        ctx.health_task = asyncio.create_task(_health_refresh_loop(ctx))
         try:
             yield
         finally:
+            ctx.health_stop.set()
+            if ctx.health_task:
+                await ctx.health_task
             await ctx.state_writer.stop()
             await ctx.trace_writer.stop()
 
+    # Lifespan manages startup/shutdown for writers; avoid duplicate handlers.
     app = FastAPI(lifespan=lifespan)
-    app.add_event_handler("startup", ctx.state_writer.start)
-    app.add_event_handler("startup", ctx.trace_writer.start)
-    app.add_event_handler("shutdown", ctx.state_writer.stop)
-    app.add_event_handler("shutdown", ctx.trace_writer.stop)
 
     @app.api_route(f"{config.proxy_base_path}/{{path:path}}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
     async def proxy(path: str, request: Request) -> Response:
@@ -436,7 +622,7 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
         upstream_url = _build_upstream_url(ctx.config, path, request.url.query)
         headers = _build_upstream_headers(request.headers.items(), api_key)
         body = await request.body()
-        prompt_hint = _extract_prompt_hint(body, request.headers.get("content-type", ""))
+        prompt_hint, prompt_head = _extract_prompt_meta(body, request.headers.get("content-type", ""))
 
         if ctx.config.dry_run:
             async with ctx.state_lock:
@@ -458,6 +644,7 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
                     "request_id": uuid.uuid4().hex,
                     "method": request.method,
                     "prompt_hint": prompt_hint,
+                    "prompt_head": prompt_head,
                     "key_label": key_label,
                     "key_hash": key_record.key_hash if key_record else "",
                     "endpoint": f"/{path}",
@@ -533,6 +720,7 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
                     "request_id": uuid.uuid4().hex,
                     "method": request.method,
                     "prompt_hint": prompt_hint,
+                    "prompt_head": prompt_head,
                     "key_label": key_label,
                     "key_hash": key_record.key_hash if key_record else "",
                     "endpoint": f"/{path}",
@@ -546,8 +734,28 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
                 {"error": "Upstream request failed", "hint": "Check connectivity or upstream status."},
                 status_code=502,
             )
+        content: Optional[bytes] = None
+        error_hint = ""
+        payment_required = False
+        if resp.status_code >= 400:
+            content = await resp.aread()
+            error_hint = _extract_error_hint(content, resp.headers.get("content-type", ""))
+            payment_required = _looks_like_payment_error(resp.status_code, error_hint)
         async with ctx.state_lock:
             record_request(ctx.state, key_label, resp.status_code)
+            if payment_required:
+                mark_blocked(
+                    ctx.state,
+                    key_label,
+                    reason="payment_required",
+                    block_seconds=ctx.config.payment_block_seconds,
+                )
+                log_event(
+                    logger,
+                    "proxy_key_blocked",
+                    key_label=key_label,
+                    reason="payment_required",
+                )
             if resp.status_code in {403, 429} or 500 <= resp.status_code <= 599:
                 cooldown = ctx.config.rotation_cooldown_seconds
                 if resp.status_code == 429:
@@ -574,18 +782,19 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
                 "request_id": uuid.uuid4().hex,
                 "method": request.method,
                 "prompt_hint": prompt_hint,
+                "prompt_head": prompt_head,
                 "key_label": key_label,
                 "key_hash": key_record.key_hash if key_record else "",
                 "endpoint": f"/{path}",
                 "status": resp.status_code,
                 "latency_ms": latency_ms,
-                "error_code": resp.status_code if resp.status_code >= 400 else None,
+                "error_code": "payment_required" if payment_required else (resp.status_code if resp.status_code >= 400 else None),
                 "rotation_index": ctx.state.rotation_index,
             },
         )
         response_headers = _filter_hop_by_hop_headers(resp.headers.items())
         if resp.is_stream_consumed:
-            content = resp.content
+            content = resp.content if content is None else content
             await _close_stream(stream_ctx, client)
             return Response(content=content, status_code=resp.status_code, headers=response_headers)
         background = BackgroundTask(_close_stream, stream_ctx, client)

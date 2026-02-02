@@ -11,30 +11,36 @@ from kmi_manager_cli.state import KeyState, State
 def test_score_key_blocked_on_auth_error() -> None:
     state = KeyState(error_401=1)
     usage = Usage(remaining_percent=50.0, used=None, limit=None, remaining=None, reset_hint=None, limits=[], raw={})
-    assert score_key(usage, state, exhausted=False) == "blocked"
+    assert score_key(usage, state, exhausted=False, blocked=False) == "blocked"
 
 
 def test_score_key_warn_on_low_quota() -> None:
     state = KeyState(request_count=10)
     usage = Usage(remaining_percent=10.0, used=None, limit=None, remaining=None, reset_hint=None, limits=[], raw={})
-    assert score_key(usage, state, exhausted=False) == "warn"
+    assert score_key(usage, state, exhausted=False, blocked=False) == "warn"
 
 
 def test_score_key_warn_on_forbidden() -> None:
     state = KeyState(error_403=1, request_count=1)
     usage = Usage(remaining_percent=50.0, used=None, limit=None, remaining=None, reset_hint=None, limits=[], raw={})
-    assert score_key(usage, state, exhausted=False) == "warn"
+    assert score_key(usage, state, exhausted=False, blocked=False) == "warn"
 
 
 def test_score_key_warn_on_usage_missing() -> None:
     state = KeyState()
-    assert score_key(None, state, exhausted=False) == "warn"
+    assert score_key(None, state, exhausted=False, blocked=False) == "warn"
 
 
 def test_score_key_exhausted() -> None:
     state = KeyState()
     usage = Usage(remaining_percent=100.0, used=None, limit=None, remaining=None, reset_hint=None, limits=[], raw={})
-    assert score_key(usage, state, exhausted=True) == "exhausted"
+    assert score_key(usage, state, exhausted=True, blocked=False) == "exhausted"
+
+
+def test_score_key_blocked_on_blacklist() -> None:
+    state = KeyState()
+    usage = Usage(remaining_percent=100.0, used=None, limit=None, remaining=None, reset_hint=None, limits=[], raw={})
+    assert score_key(usage, state, exhausted=False, blocked=True) == "blocked"
 
 
 def test_get_health_map_dry_run(tmp_path: Path) -> None:

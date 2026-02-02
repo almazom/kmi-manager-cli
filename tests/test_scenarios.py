@@ -93,6 +93,61 @@ def test_proxy_marks_exhausted_on_429(tmp_path: Path, monkeypatch) -> None:
     assert state.keys["alpha"].exhausted_until is not None
 
 
+def test_proxy_marks_blocked_on_payment(tmp_path: Path, monkeypatch) -> None:
+    class PaymentRequiredClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        class _Stream:
+            async def __aenter__(self):
+                request = httpx.Request("GET", "https://example.com")
+                return httpx.Response(
+                    402,
+                    request=request,
+                    content=b'{"error": {"message": "Payment required"}}',
+                    headers={"content-type": "application/json"},
+                )
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        def stream(self, *args, **kwargs):
+            return self._Stream()
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr("kmi_manager_cli.proxy.httpx.AsyncClient", lambda *args, **kwargs: PaymentRequiredClient())
+
+    config = Config(
+        auths_dir=tmp_path,
+        proxy_listen="127.0.0.1:54123",
+        proxy_base_path="/kmi-rotor/v1",
+        upstream_base_url="https://example.com/api",
+        state_dir=tmp_path,
+        dry_run=False,
+        auto_rotate_allowed=True,
+        rotation_cooldown_seconds=60,
+        proxy_allow_remote=False,
+        proxy_token="",
+        proxy_max_rps=0,
+        proxy_max_rpm=0,
+        proxy_retry_max=0,
+        proxy_retry_base_ms=250,
+        env_path=None,
+        payment_block_seconds=60,
+    )
+    registry = Registry(keys=[KeyRecord(label="alpha", api_key="sk-test-a")], active_index=0)
+    state = State(keys={"alpha": KeyState()})
+    app = create_app(config, registry, state)
+    client = TestClient(app)
+
+    resp = client.get("/kmi-rotor/v1/models")
+    assert resp.status_code == 402
+    assert state.keys["alpha"].blocked_reason == "payment_required"
+    assert state.keys["alpha"].blocked_until is not None
+
+
 def test_load_trace_entries_skips_corrupt_lines(tmp_path: Path) -> None:
     config = Config(
         auths_dir=tmp_path,

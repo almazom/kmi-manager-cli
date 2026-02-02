@@ -10,7 +10,7 @@ from kmi_manager_cli.config import Config
 from kmi_manager_cli.keys import Registry
 from kmi_manager_cli.locking import atomic_write_text, file_lock
 from kmi_manager_cli.logging import get_logger
-from kmi_manager_cli.security import warn_if_insecure
+from kmi_manager_cli.security import ensure_secure_permissions, warn_if_insecure
 
 STATE_SCHEMA_VERSION = 1
 
@@ -24,6 +24,8 @@ class KeyState:
     error_429: int = 0
     error_5xx: int = 0
     exhausted_until: Optional[str] = None
+    blocked_until: Optional[str] = None
+    blocked_reason: Optional[str] = None
 
 
 @dataclass
@@ -32,6 +34,7 @@ class State:
     active_index: int = 0
     rotation_index: int = 0
     auto_rotate: bool = False
+    last_health_refresh: Optional[str] = None
     keys: dict[str, KeyState] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -40,6 +43,7 @@ class State:
             "active_index": self.active_index,
             "rotation_index": self.rotation_index,
             "auto_rotate": self.auto_rotate,
+            "last_health_refresh": self.last_health_refresh,
             "keys": {label: vars(state) for label, state in self.keys.items()},
         }
 
@@ -52,6 +56,7 @@ class State:
             active_index=int(data.get("active_index", 0)),
             rotation_index=int(data.get("rotation_index", 0)),
             auto_rotate=bool(data.get("auto_rotate", False)),
+            last_health_refresh=data.get("last_health_refresh"),
             keys=keys,
         )
 
@@ -79,6 +84,13 @@ def load_state(config: Config, registry: Registry) -> State:
     config.state_dir.expanduser().mkdir(parents=True, exist_ok=True)
     path = _state_path(config)
     logger = get_logger(config)
+    ensure_secure_permissions(
+        config.state_dir.expanduser(),
+        logger,
+        "state_dir",
+        is_dir=True,
+        enforce=config.enforce_file_perms,
+    )
     warn_if_insecure(config.state_dir.expanduser(), logger, "state_dir")
     if path.exists():
         warn_if_insecure(path, logger, "state_file")
@@ -131,6 +143,14 @@ def save_state(config: Config, state: State) -> None:
     payload = json.dumps(state.to_dict(), indent=2) + "\n"
     with file_lock(path):
         atomic_write_text(path, payload)
+    logger = get_logger(config)
+    ensure_secure_permissions(
+        path,
+        logger,
+        "state_file",
+        is_dir=False,
+        enforce=config.enforce_file_perms,
+    )
 
 
 def mark_last_used(state: State, label: str) -> None:

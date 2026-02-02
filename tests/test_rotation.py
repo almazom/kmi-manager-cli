@@ -3,6 +3,7 @@ from __future__ import annotations
 from kmi_manager_cli.keys import KeyRecord, Registry
 from kmi_manager_cli.health import HealthInfo
 from kmi_manager_cli.rotation import (
+    mark_blocked,
     mark_exhausted,
     next_healthy_index,
     rotate_manual,
@@ -91,6 +92,72 @@ def test_select_key_for_request_allows_403() -> None:
     )
     state = State(active_index=0, keys={"a": KeyState(error_403=1)})
     key = select_key_for_request(registry, state, auto_rotate=False)
+    assert key.label == "a"
+
+
+def test_select_key_for_request_skips_blocked() -> None:
+    registry = Registry(
+        keys=[
+            KeyRecord(label="a", api_key="sk-a"),
+            KeyRecord(label="b", api_key="sk-b"),
+        ],
+        active_index=0,
+    )
+    state = State(active_index=0, keys={"a": KeyState(), "b": KeyState()})
+    mark_blocked(state, "a", reason="payment_required", block_seconds=3600)
+    key = select_key_for_request(registry, state, auto_rotate=False)
+    assert key.label == "b"
+
+
+def test_select_key_for_request_requires_usage_ok() -> None:
+    registry = Registry(
+        keys=[
+            KeyRecord(label="a", api_key="sk-a"),
+            KeyRecord(label="b", api_key="sk-b"),
+        ],
+        active_index=0,
+    )
+    state = State(active_index=0)
+    health = {
+        "a": HealthInfo(
+            status="warn",
+            remaining_percent=None,
+            used=None,
+            limit=None,
+            remaining=None,
+            reset_hint=None,
+            limits=[],
+            error_rate=0.0,
+            usage_ok=False,
+        ),
+        "b": HealthInfo(
+            status="healthy",
+            remaining_percent=80.0,
+            used=None,
+            limit=None,
+            remaining=None,
+            reset_hint=None,
+            limits=[],
+            error_rate=0.0,
+            usage_ok=True,
+        ),
+    }
+    key = select_key_for_request(registry, state, auto_rotate=False, health=health, require_usage_ok=True)
+    assert key.label == "b"
+
+
+def test_select_key_fail_open_on_empty_cache() -> None:
+    registry = Registry(keys=[KeyRecord(label="a", api_key="sk-a")], active_index=0)
+    state = State(active_index=0)
+    key = select_key_for_request(
+        registry,
+        state,
+        auto_rotate=False,
+        health=None,
+        require_usage_ok=True,
+        fail_open_on_empty_cache=True,
+    )
+    assert key is not None
     assert key.label == "a"
 
 

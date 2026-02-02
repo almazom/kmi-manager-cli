@@ -35,6 +35,13 @@ DEFAULT_KMI_WRITE_CONFIG = True
 DEFAULT_KMI_ROTATE_ON_TIE = True
 DEFAULT_KMI_UPSTREAM_ALLOWLIST = ""
 DEFAULT_KMI_TIMEZONE = "local"
+DEFAULT_KMI_ENFORCE_FILE_PERMS = True
+DEFAULT_KMI_PAYMENT_BLOCK_SECONDS = 3600
+DEFAULT_KMI_REQUIRE_USAGE_BEFORE_REQUEST = False
+DEFAULT_KMI_USAGE_CACHE_SECONDS = 600
+DEFAULT_KMI_BLOCKLIST_RECHECK_SECONDS = 3600
+DEFAULT_KMI_BLOCKLIST_RECHECK_MAX = 3
+DEFAULT_KMI_FAIL_OPEN_ON_EMPTY_CACHE = True
 
 
 def _parse_bool(value: Optional[str], default: bool) -> bool:
@@ -127,6 +134,13 @@ class Config:
     proxy_max_rpm_per_key: int = DEFAULT_KMI_PROXY_MAX_RPM_PER_KEY
     time_zone: str = DEFAULT_KMI_TIMEZONE
     auto_rotate_e2e: bool = DEFAULT_KMI_AUTO_ROTATE_E2E
+    enforce_file_perms: bool = DEFAULT_KMI_ENFORCE_FILE_PERMS
+    payment_block_seconds: int = DEFAULT_KMI_PAYMENT_BLOCK_SECONDS
+    require_usage_before_request: bool = DEFAULT_KMI_REQUIRE_USAGE_BEFORE_REQUEST
+    usage_cache_seconds: int = DEFAULT_KMI_USAGE_CACHE_SECONDS
+    blocklist_recheck_seconds: int = DEFAULT_KMI_BLOCKLIST_RECHECK_SECONDS
+    blocklist_recheck_max: int = DEFAULT_KMI_BLOCKLIST_RECHECK_MAX
+    fail_open_on_empty_cache: bool = DEFAULT_KMI_FAIL_OPEN_ON_EMPTY_CACHE
 
 
 
@@ -182,6 +196,27 @@ def load_config(env_path: Optional[Path] = None) -> Config:
     write_config = _parse_bool(os.getenv("KMI_WRITE_CONFIG"), DEFAULT_KMI_WRITE_CONFIG)
     rotate_on_tie = _parse_bool(os.getenv("KMI_ROTATE_ON_TIE"), DEFAULT_KMI_ROTATE_ON_TIE)
     time_zone = os.getenv("KMI_TIMEZONE", DEFAULT_KMI_TIMEZONE)
+    enforce_file_perms = _parse_bool(os.getenv("KMI_ENFORCE_FILE_PERMS"), DEFAULT_KMI_ENFORCE_FILE_PERMS)
+    payment_block_seconds = int(
+        os.getenv("KMI_PAYMENT_BLOCK_SECONDS", str(DEFAULT_KMI_PAYMENT_BLOCK_SECONDS))
+    )
+    require_usage_before_request = _parse_bool(
+        os.getenv("KMI_REQUIRE_USAGE_BEFORE_REQUEST"),
+        DEFAULT_KMI_REQUIRE_USAGE_BEFORE_REQUEST,
+    )
+    usage_cache_seconds = int(
+        os.getenv("KMI_USAGE_CACHE_SECONDS", str(DEFAULT_KMI_USAGE_CACHE_SECONDS))
+    )
+    blocklist_recheck_seconds = int(
+        os.getenv("KMI_BLOCKLIST_RECHECK_SECONDS", str(DEFAULT_KMI_BLOCKLIST_RECHECK_SECONDS))
+    )
+    blocklist_recheck_max = int(
+        os.getenv("KMI_BLOCKLIST_RECHECK_MAX", str(DEFAULT_KMI_BLOCKLIST_RECHECK_MAX))
+    )
+    fail_open_on_empty_cache = _parse_bool(
+        os.getenv("KMI_FAIL_OPEN_ON_EMPTY_CACHE"),
+        DEFAULT_KMI_FAIL_OPEN_ON_EMPTY_CACHE,
+    )
 
     return Config(
         auths_dir=auths_dir,
@@ -212,4 +247,11 @@ def load_config(env_path: Optional[Path] = None) -> Config:
         proxy_require_tls=proxy_require_tls,
         proxy_tls_terminated=proxy_tls_terminated,
         time_zone=time_zone,
+        enforce_file_perms=enforce_file_perms,
+        payment_block_seconds=payment_block_seconds,
+        require_usage_before_request=require_usage_before_request,
+        usage_cache_seconds=usage_cache_seconds,
+        blocklist_recheck_seconds=blocklist_recheck_seconds,
+        blocklist_recheck_max=blocklist_recheck_max,
+        fail_open_on_empty_cache=fail_open_on_empty_cache,
     )

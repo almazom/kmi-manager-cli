@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Optional, TYPE_CHECKING
 from kmi_manager_cli.keys import KeyRecord, Registry
-from kmi_manager_cli.state import State, mark_last_used
+from kmi_manager_cli.state import KeyState, State, mark_last_used
 
 if TYPE_CHECKING:
     from kmi_manager_cli.health import HealthInfo
@@ -11,6 +11,8 @@ if TYPE_CHECKING:
 
 def _is_eligible(key: KeyRecord, state: State, health: Optional[dict[str, HealthInfo]] = None) -> bool:
     if key.disabled:
+        return False
+    if is_blocked(state, key.label):
         return False
     key_state = state.keys.get(key.label)
     if key_state and key_state.error_401 > 0:
@@ -24,14 +26,38 @@ def _is_eligible(key: KeyRecord, state: State, health: Optional[dict[str, Health
     return status not in {"blocked", "exhausted"}
 
 
-def next_healthy_index(registry: Registry, state: State, health: Optional[dict[str, HealthInfo]] = None) -> Optional[int]:
+def _usage_ok(
+    health: Optional[dict[str, HealthInfo]],
+    label: str,
+    require_usage_ok: bool,
+    fail_open_on_empty_cache: bool,
+) -> bool:
+    if not require_usage_ok:
+        return True
+    if not health:
+        return fail_open_on_empty_cache
+    info = health.get(label)
+    if info is None:
+        return fail_open_on_empty_cache
+    return bool(info.usage_ok)
+
+
+def next_healthy_index(
+    registry: Registry,
+    state: State,
+    health: Optional[dict[str, HealthInfo]] = None,
+    require_usage_ok: bool = False,
+    fail_open_on_empty_cache: bool = False,
+) -> Optional[int]:
     if not registry.keys:
         return None
     total = len(registry.keys)
     start = state.active_index % total
     for offset in range(1, total + 1):
         idx = (start + offset) % total
-        if _is_eligible(registry.keys[idx], state, health):
+        if _is_eligible(registry.keys[idx], state, health) and _usage_ok(
+            health, registry.keys[idx].label, require_usage_ok, fail_open_on_empty_cache
+        ):
             return idx
     return None
 
@@ -80,12 +106,22 @@ def _manual_candidates(
 
 
 def most_resourceful_index(
-    registry: Registry, state: State, health: Optional[dict[str, HealthInfo]] = None
+    registry: Registry,
+    state: State,
+    health: Optional[dict[str, HealthInfo]] = None,
+    require_usage_ok: bool = False,
+    fail_open_on_empty_cache: bool = False,
 ) -> Optional[int]:
     if not registry.keys:
         return None
     if health is None:
-        return next_healthy_index(registry, state, health)
+        return next_healthy_index(
+            registry,
+            state,
+            health,
+            require_usage_ok=require_usage_ok,
+            fail_open_on_empty_cache=fail_open_on_empty_cache,
+        )
 
     candidates = _manual_candidates(registry, state, health)
     if not candidates:
@@ -187,7 +223,13 @@ def rotate_manual(
     return key, True, None
 
 
-def select_key_round_robin(registry: Registry, state: State, health: Optional[dict[str, HealthInfo]] = None) -> Optional[KeyRecord]:
+def select_key_round_robin(
+    registry: Registry,
+    state: State,
+    health: Optional[dict[str, HealthInfo]] = None,
+    require_usage_ok: bool = False,
+    fail_open_on_empty_cache: bool = False,
+) -> Optional[KeyRecord]:
     if not registry.keys:
         return None
     total = len(registry.keys)
@@ -197,33 +239,108 @@ def select_key_round_robin(registry: Registry, state: State, health: Optional[di
             idx = (start + offset) % total
             candidate = registry.keys[idx]
             info = health.get(candidate.label)
-            if info and info.status == "healthy" and _is_eligible(candidate, state, health):
+            if (
+                info
+                and info.status == "healthy"
+                and _is_eligible(candidate, state, health)
+                and _usage_ok(health, candidate.label, require_usage_ok, fail_open_on_empty_cache)
+            ):
                 state.rotation_index = (idx + 1) % total
                 mark_last_used(state, candidate.label)
                 return candidate
     for offset in range(total):
         idx = (start + offset) % total
         candidate = registry.keys[idx]
-        if _is_eligible(candidate, state, health):
+        if _is_eligible(candidate, state, health) and _usage_ok(
+            health, candidate.label, require_usage_ok, fail_open_on_empty_cache
+        ):
             state.rotation_index = (idx + 1) % total
             mark_last_used(state, candidate.label)
             return candidate
     return None
 
 
-def select_key_for_request(registry: Registry, state: State, auto_rotate: bool, health: Optional[dict[str, HealthInfo]] = None) -> Optional[KeyRecord]:
+def select_key_for_request(
+    registry: Registry,
+    state: State,
+    auto_rotate: bool,
+    health: Optional[dict[str, HealthInfo]] = None,
+    require_usage_ok: bool = False,
+    fail_open_on_empty_cache: bool = False,
+) -> Optional[KeyRecord]:
     if auto_rotate:
-        return select_key_round_robin(registry, state, health)
+        return select_key_round_robin(
+            registry,
+            state,
+            health,
+            require_usage_ok=require_usage_ok,
+            fail_open_on_empty_cache=fail_open_on_empty_cache,
+        )
     active = registry.active_key
-    if active and _is_eligible(active, state, health):
+    if active and _is_eligible(active, state, health) and _usage_ok(
+        health, active.label, require_usage_ok, fail_open_on_empty_cache
+    ):
         return active
-    idx = next_healthy_index(registry, state, health)
+    idx = next_healthy_index(
+        registry,
+        state,
+        health,
+        require_usage_ok=require_usage_ok,
+        fail_open_on_empty_cache=fail_open_on_empty_cache,
+    )
     if idx is None:
         return None
     state.active_index = idx
     key = registry.keys[idx]
     mark_last_used(state, key.label)
     return key
+
+
+def mark_blocked(state: State, label: str, reason: str, block_seconds: Optional[int]) -> None:
+    if label not in state.keys:
+        state.keys[label] = KeyState()
+    key_state = state.keys[label]
+    key_state.blocked_reason = reason
+    if block_seconds is None or block_seconds <= 0:
+        key_state.blocked_until = None
+        return
+    until = datetime.now(timezone.utc) + timedelta(seconds=block_seconds)
+    key_state.blocked_until = until.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def clear_blocked(state: State, label: Optional[str] = None) -> int:
+    if label is not None:
+        key_state = state.keys.get(label)
+        if not key_state:
+            return 0
+        if key_state.blocked_reason is None and key_state.blocked_until is None:
+            return 0
+        key_state.blocked_reason = None
+        key_state.blocked_until = None
+        return 1
+    cleared = 0
+    for key_state in state.keys.values():
+        if key_state.blocked_reason is None and key_state.blocked_until is None:
+            continue
+        key_state.blocked_reason = None
+        key_state.blocked_until = None
+        cleared += 1
+    return cleared
+
+
+def is_blocked(state: State, label: str) -> bool:
+    key_state = state.keys.get(label)
+    if not key_state:
+        return False
+    if key_state.blocked_reason is None and key_state.blocked_until is None:
+        return False
+    if key_state.blocked_until:
+        try:
+            until = datetime.fromisoformat(key_state.blocked_until.replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        return datetime.now(timezone.utc) < until
+    return True
 
 
 def mark_exhausted(state: State, label: str, cooldown_seconds: int) -> None:

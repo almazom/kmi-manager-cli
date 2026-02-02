@@ -10,7 +10,7 @@ from typing import Iterable
 from kmi_manager_cli.config import Config
 from kmi_manager_cli.locking import file_lock
 from kmi_manager_cli.logging import get_logger
-from kmi_manager_cli.security import warn_if_insecure
+from kmi_manager_cli.security import ensure_secure_permissions, warn_if_insecure
 from kmi_manager_cli.time_utils import format_timestamp, resolve_timezone
 
 
@@ -26,6 +26,14 @@ def trace_now_str(config: Config) -> str:
 def trace_path(config: Config) -> Path:
     path = config.state_dir.expanduser() / "trace" / "trace.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
+    logger = get_logger(config)
+    ensure_secure_permissions(
+        path.parent,
+        logger,
+        "trace_dir",
+        is_dir=True,
+        enforce=config.enforce_file_perms,
+    )
     return path
 
 
@@ -63,6 +71,14 @@ def append_trace(config: Config, entry: dict) -> None:
         _rotate_trace_if_needed(path, config.trace_max_bytes, config.trace_max_backups)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=True) + "\n")
+    logger = get_logger(config)
+    ensure_secure_permissions(
+        path,
+        logger,
+        "trace_file",
+        is_dir=False,
+        enforce=config.enforce_file_perms,
+    )
 
 
 def _tail_lines(path: Path, limit: int) -> list[str]:

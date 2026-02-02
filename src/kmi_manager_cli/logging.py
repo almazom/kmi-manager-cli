@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from kmi_manager_cli.config import Config
-from kmi_manager_cli.security import warn_if_insecure
+from kmi_manager_cli.security import ensure_secure_permissions, warn_if_insecure
 from kmi_manager_cli.time_utils import format_timestamp, resolve_timezone
 
 
@@ -43,6 +43,20 @@ def get_logger(config: Config, name: str = "kmi") -> logging.Logger:
     )
     handler.setFormatter(JsonFormatter(config.time_zone))
     logger.addHandler(handler)
+    ensure_secure_permissions(
+        log_path.parent,
+        logger,
+        "log_dir",
+        is_dir=True,
+        enforce=config.enforce_file_perms,
+    )
+    ensure_secure_permissions(
+        log_path,
+        logger,
+        "log_file",
+        is_dir=False,
+        enforce=config.enforce_file_perms,
+    )
     warn_if_insecure(log_path, logger, "log_file")
     return logger
 

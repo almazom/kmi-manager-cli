@@ -10,7 +10,7 @@ from kmi_manager_cli.config import Config
 from kmi_manager_cli.logging import get_logger, log_event
 from kmi_manager_cli.keys import Registry
 from kmi_manager_cli.state import KeyState, State
-from kmi_manager_cli.rotation import is_exhausted
+from kmi_manager_cli.rotation import is_blocked, is_exhausted
 
 
 @dataclass
@@ -45,6 +45,7 @@ class HealthInfo:
     reset_hint: Optional[str]
     limits: list[LimitInfo]
     error_rate: float
+    usage_ok: bool = True
     email: Optional[str] = None
 
 
@@ -274,7 +275,9 @@ def fetch_usage(
     )
 
 
-def score_key(usage: Optional[Usage], key_state: KeyState, exhausted: bool) -> str:
+def score_key(usage: Optional[Usage], key_state: KeyState, exhausted: bool, blocked: bool = False) -> str:
+    if blocked:
+        return "blocked"
     if exhausted:
         return "exhausted"
     if key_state.error_401 > 0:
@@ -311,7 +314,8 @@ def get_health_map(config: Config, registry: Registry, state: State) -> dict[str
         key_state = state.keys.get(key.label, KeyState())
         total = max(key_state.request_count, 1)
         error_rate = (key_state.error_403 + key_state.error_429 + key_state.error_5xx) / total
-        status = score_key(usage, key_state, is_exhausted(state, key.label))
+        blocked = is_blocked(state, key.label)
+        status = score_key(usage, key_state, is_exhausted(state, key.label), blocked)
         health[key.label] = HealthInfo(
             status=status,
             remaining_percent=usage.remaining_percent if usage else None,
@@ -321,6 +325,7 @@ def get_health_map(config: Config, registry: Registry, state: State) -> dict[str
             reset_hint=usage.reset_hint if usage else None,
             limits=usage.limits if usage else [],
             error_rate=error_rate,
+            usage_ok=usage is not None,
             email=usage.email if usage else None,
         )
     return health
@@ -340,7 +345,8 @@ def get_accounts_health(config: Config, accounts: list[Account], state: State, f
         key_state = state.keys.get(account.label, KeyState())
         total = max(key_state.request_count, 1)
         error_rate = (key_state.error_403 + key_state.error_429 + key_state.error_5xx) / total
-        status = score_key(usage, key_state, is_exhausted(state, account.label))
+        blocked = is_blocked(state, account.label)
+        status = score_key(usage, key_state, is_exhausted(state, account.label), blocked)
         health[account.id] = HealthInfo(
             status=status,
             remaining_percent=usage.remaining_percent if usage else None,
@@ -350,6 +356,7 @@ def get_accounts_health(config: Config, accounts: list[Account], state: State, f
             reset_hint=usage.reset_hint if usage else None,
             limits=usage.limits if usage else [],
             error_rate=error_rate,
+            usage_ok=usage is not None,
             email=usage.email if usage else None,
         )
     return health
