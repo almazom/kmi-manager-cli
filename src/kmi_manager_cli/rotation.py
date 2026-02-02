@@ -161,16 +161,112 @@ def most_resourceful_index(
     return best[0]
 
 
+def _build_stay_reason(
+    key: KeyRecord,
+    current_idx: int,
+    candidates: list,
+    health: dict[str, HealthInfo],
+) -> Optional[str]:
+    """Build human-readable reason for staying on current key.
+    
+    Args:
+        key: Current key record
+        current_idx: Index of current key
+        candidates: List of (idx, key, info) candidate tuples
+        health: Health info mapping
+        
+    Returns:
+        Reason string or None
+    """
+    if not candidates:
+        return None
+        
+    sorted_candidates = sorted(
+        candidates,
+        key=lambda item: _candidate_sort_key(item[1], item[2], False),
+    )
+    current_info = health.get(key.label)
+    runner = next(
+        (entry for entry in sorted_candidates if entry[0] != current_idx), None
+    )
+    
+    if not runner:
+        return None
+        
+    runner_info = runner[2]
+    cur_remaining = _resource_value(current_info)
+    runner_remaining = _resource_value(runner_info)
+    current_score = _manual_score(current_info)
+    runner_score = _manual_score(runner_info)
+    
+    if current_score == runner_score:
+        if cur_remaining is not None:
+            return (
+                f"Current key ties for best remaining quota ({cur_remaining:.0f}%). "
+                f"Keeping current over {runner[1].label}."
+            )
+        return f"Current key ties for best score. Keeping current over {runner[1].label}."
+    
+    if cur_remaining is not None and runner_remaining is not None:
+        return (
+            f"Current key has higher remaining quota ({cur_remaining:.0f}%), "
+            f"next best {runner[1].label} has {runner_remaining:.0f}%."
+        )
+    
+    if (
+        current_info
+        and runner_info
+        and current_info.error_rate != runner_info.error_rate
+    ):
+        return (
+            f"Current key has lower error rate ({current_info.error_rate * 100:.1f}%), "
+            f"next best {runner[1].label} has {runner_info.error_rate * 100:.1f}%."
+        )
+    
+    if (
+        current_info
+        and runner_info
+        and current_info.status != runner_info.status
+    ):
+        return (
+            f"Current key has better status ({current_info.status}) than {runner[1].label} "
+            f"({runner_info.status})."
+        )
+    
+    if current_info:
+        return f"Current key already ranks best (status={current_info.status})."
+    
+    return None
+
+
 def rotate_manual(
     registry: Registry,
     state: State,
     health: Optional[dict[str, HealthInfo]] = None,
     prefer_next_on_tie: bool = False,
 ) -> tuple[KeyRecord, bool, Optional[str]]:
+    """Select the best key for manual rotation.
+    
+    Uses health-based scoring to find the most resourceful eligible key.
+    If current key is already best, provides a reason for not rotating.
+    
+    Args:
+        registry: Key registry with all available keys
+        state: Current rotation state
+        health: Optional health info for each key
+        prefer_next_on_tie: If True, rotate to next on tie
+        
+    Returns:
+        Tuple of (selected_key, did_rotate, reason)
+        
+    Raises:
+        RuntimeError: If no eligible keys available
+    """
     candidates = (
         _manual_candidates(registry, state, health) if health is not None else None
     )
     current_idx = state.active_index
+    
     if health is None:
         idx = most_resourceful_index(registry, state, health)
         if idx is None:
@@ -200,58 +296,10 @@ def rotate_manual(
             key = registry.keys[idx]
             mark_last_used(state, key.label)
             return key, True, "Tie for best score; rotating to next eligible."
+        
         idx = current_idx
         key = registry.keys[idx]
-        reason = None
-        if registry.keys:
-            sorted_candidates = sorted(
-                candidates,
-                key=lambda item: _candidate_sort_key(item[1], item[2], False),
-            )
-            current_info = health.get(key.label)
-            runner = next(
-                (entry for entry in sorted_candidates if entry[0] != current_idx), None
-            )
-            cur_remaining = _resource_value(current_info)
-            if runner:
-                runner_info = runner[2]
-                runner_remaining = _resource_value(runner_info)
-                current_score = _manual_score(current_info)
-                runner_score = _manual_score(runner_info)
-                if current_score == runner_score:
-                    if cur_remaining is not None:
-                        reason = (
-                            f"Current key ties for best remaining quota ({cur_remaining:.0f}%). "
-                            f"Keeping current over {runner[1].label}."
-                        )
-                    else:
-                        reason = f"Current key ties for best score. Keeping current over {runner[1].label}."
-                elif cur_remaining is not None and runner_remaining is not None:
-                    reason = (
-                        f"Current key has higher remaining quota ({cur_remaining:.0f}%), "
-                        f"next best {runner[1].label} has {runner_remaining:.0f}%."
-                    )
-                elif (
-                    current_info
-                    and runner_info
-                    and current_info.error_rate != runner_info.error_rate
-                ):
-                    reason = (
-                        f"Current key has lower error rate ({current_info.error_rate * 100:.1f}%), "
-                        f"next best {runner[1].label} has {runner_info.error_rate * 100:.1f}%."
-                    )
-                elif (
-                    current_info
-                    and runner_info
-                    and current_info.status != runner_info.status
-                ):
-                    reason = (
-                        f"Current key has better status ({current_info.status}) than {runner[1].label} "
-                        f"({runner_info.status})."
-                    )
-            if reason is None and current_info:
-                status = current_info.status
-                reason = f"Current key already ranks best (status={status})."
+        reason = _build_stay_reason(key, current_idx, candidates, health)
         return key, False, reason
 
     idx = next(idx for idx, score, _, _ in scored if score == best_score)
