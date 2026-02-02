@@ -555,6 +555,8 @@ def proxy(
     except ValueError as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1)
+    if typer.confirm('Run "kmi trace" now?', default=False):
+        run_trace_tui(config)
 
 
 @app.command("proxy-stop")
