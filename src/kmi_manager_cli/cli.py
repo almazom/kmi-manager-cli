@@ -4,6 +4,7 @@ import json
 import os
 import socket
 import subprocess
+import sys
 import time
 import shutil
 import signal
@@ -547,6 +548,8 @@ def proxy(
     if daemon:
         _load_registry_or_exit(config)
         _start_proxy_daemon(config)
+        if sys.stdin.isatty() and typer.confirm('Run "kmi trace" now?', default=False):
+            run_trace_tui(config)
         raise typer.Exit()
     registry = _load_registry_or_exit(config)
     state = load_state(config, registry)
@@ -555,7 +558,7 @@ def proxy(
     except ValueError as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1)
-    if typer.confirm('Run "kmi trace" now?', default=False):
+    if sys.stdin.isatty() and typer.confirm('Run "kmi trace" now?', default=False):
         run_trace_tui(config)
 
 
