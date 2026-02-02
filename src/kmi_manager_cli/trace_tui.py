@@ -68,9 +68,10 @@ class HighlightTracker:
 
 
 def _build_view(
-    entries: list[dict], 
-    window: int, 
-    highlight_id: str | None = None
+    entries: list[dict],
+    window: int,
+    highlight_id: str | None = None,
+    upstream_base_url: str | None = None,
 ) -> Panel:
     confidence = compute_confidence(entries)
     counts, total = compute_distribution(entries)
@@ -95,10 +96,17 @@ def _build_view(
         method = str(entry.get("method", ""))[:1].upper()
         key = str(entry.get("key_label", ""))
         endpoint = str(entry.get("endpoint", ""))
+        display_endpoint = endpoint
+        if upstream_base_url:
+            base = upstream_base_url.rstrip("/")
+            if endpoint:
+                display_endpoint = f"{base}{endpoint}"
+            else:
+                display_endpoint = base
         status = str(entry.get("status", ""))
         head = str(entry.get("prompt_head", "")).strip()
         hint = str(entry.get("prompt_hint", "")).strip()
-        line = f"{ts_short} | {req_id} | {method} | {key} | {endpoint} | {status}"
+        line = f"{ts_short} | {req_id} | {method} | {key} | {display_endpoint} | {status}"
         hint_tail = hint
         if head and hint and hint.lower().startswith(head.lower()):
             hint_tail = hint[len(head) :].lstrip()
@@ -134,11 +142,22 @@ def run_trace_tui(config: Config, window: int = 200, refresh_seconds: float = 1.
     tracker = HighlightTracker()
     
     try:
-        with Live(_build_view([], window), refresh_per_second=4, console=console) as live:
+        with Live(
+            _build_view([], window, upstream_base_url=config.upstream_base_url),
+            refresh_per_second=4,
+            console=console,
+        ) as live:
             while True:
                 entries = load_trace_entries(Path(path), window=window)
                 highlight_id = tracker.update(entries)
-                live.update(_build_view(entries, window, highlight_id))
+                live.update(
+                    _build_view(
+                        entries,
+                        window,
+                        highlight_id,
+                        upstream_base_url=config.upstream_base_url,
+                    )
+                )
                 time.sleep(refresh_seconds)
     except KeyboardInterrupt:
         console.print("Trace stopped")

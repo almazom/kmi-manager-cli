@@ -243,21 +243,6 @@ def _looks_like_payment_error(status_code: int, hint: str) -> bool:
         return False
     lowered = hint.lower()
     return any(token in lowered for token in _PAYMENT_ERROR_TOKENS)
-    value = value.strip()
-    if not value:
-        return None
-    try:
-        seconds = int(value)
-        return max(0, seconds)
-    except ValueError:
-        try:
-            dt = parsedate_to_datetime(value)
-        except (TypeError, ValueError):
-            return None
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        delta = int((dt - datetime.now(timezone.utc)).total_seconds())
-        return max(0, delta)
 
 
 async def _close_stream(stream_ctx, client: httpx.AsyncClient) -> None:

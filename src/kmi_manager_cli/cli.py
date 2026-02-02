@@ -40,6 +40,7 @@ from kmi_manager_cli.logging import get_logger
 from kmi_manager_cli.proxy import parse_listen, run_proxy
 from kmi_manager_cli.rotation import is_blocked, is_exhausted, rotate_manual
 from kmi_manager_cli.state import load_state, save_state
+from kmi_manager_cli.time_utils import parse_iso_timestamp
 from kmi_manager_cli.trace import compute_confidence, compute_distribution, trace_path
 from kmi_manager_cli.trace_tui import run_trace_tui
 from rich.console import Group
