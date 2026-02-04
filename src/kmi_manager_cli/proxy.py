@@ -727,6 +727,7 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
                     "key_label": key_label,
                 },
                 status_code=200,
+                headers={"X-KMI-Dry-Run": "true"},
             )
 
         stream_ctx = None
