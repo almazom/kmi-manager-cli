@@ -239,19 +239,21 @@ def _parse_retry_after(value: Optional[str]) -> Optional[int]:
         return max(0, delta)
 
 
-def _collect_error_strings(payload: object, bucket: list[str]) -> None:
+def _collect_error_strings(payload: object, bucket: list[str], depth: int = 0) -> None:
+    if depth > 100:  # Limit recursion to prevent stack overflow
+        return
     if isinstance(payload, dict):
         for key, value in payload.items():
             key_lower = str(key).lower()
             if key_lower in _ERROR_FIELDS:
-                _collect_error_strings(value, bucket)
+                _collect_error_strings(value, bucket, depth + 1)
                 continue
             if isinstance(value, str) and key_lower.startswith("error"):
                 bucket.append(value)
         return
     if isinstance(payload, list):
         for item in payload:
-            _collect_error_strings(item, bucket)
+            _collect_error_strings(item, bucket, depth + 1)
         return
     if isinstance(payload, (str, int, float)):
         bucket.append(str(payload))
@@ -283,10 +285,10 @@ def _looks_like_payment_error(status_code: int, hint: str) -> bool:
     return any(token in lowered for token in _PAYMENT_ERROR_TOKENS)
 
 
-async def _close_stream(stream_ctx, client: httpx.AsyncClient) -> None:
+async def _close_stream(stream_ctx, client: Optional[httpx.AsyncClient]) -> None:
     if stream_ctx is not None:
         await stream_ctx.__aexit__(None, None, None)
-    await client.aclose()
+    # Note: client is now shared and managed by lifespan, don't close it here
 
 
 def _get_cached_health(ctx: ProxyContext) -> dict[str, "HealthInfo"]:
@@ -298,14 +300,15 @@ async def _maybe_refresh_health(ctx: ProxyContext) -> None:
     if interval <= 0:
         return
     now = time.time()
-    if ctx.health_cache_ts and (now - ctx.health_cache_ts) < interval:
-        return
+    async with ctx.state_lock:
+        if ctx.health_cache_ts and (now - ctx.health_cache_ts) < interval:
+            return
     health = await asyncio.to_thread(
         get_health_map, ctx.config, ctx.registry, ctx.state
     )
-    ctx.health_cache = health
-    ctx.health_cache_ts = now
     async with ctx.state_lock:
+        ctx.health_cache = health
+        ctx.health_cache_ts = now
         ctx.state.last_health_refresh = datetime.now(timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
@@ -359,9 +362,13 @@ async def _maybe_recheck_blocked(ctx: ProxyContext) -> None:
 
 
 async def _health_refresh_loop(ctx: ProxyContext) -> None:
+    logger = get_logger(ctx.config)
     while not ctx.health_stop.is_set():
-        await _maybe_refresh_health(ctx)
-        await _maybe_recheck_blocked(ctx)
+        try:
+            await _maybe_refresh_health(ctx)
+            await _maybe_recheck_blocked(ctx)
+        except Exception as exc:
+            log_event(logger, "health_refresh_error", error=str(exc))
         try:
             await asyncio.wait_for(ctx.health_stop.wait(), timeout=1.0)
         except asyncio.TimeoutError:
@@ -378,6 +385,7 @@ class ProxyContext:
     state_lock: asyncio.Lock
     state_writer: "StateWriter"
     trace_writer: "TraceWriter"
+    http_client: Optional[httpx.AsyncClient] = None
     health_cache: dict[str, "HealthInfo"] = field(default_factory=dict)
     health_cache_ts: float = 0.0
     blocklist_recheck_ts: float = 0.0
@@ -416,14 +424,18 @@ class StateWriter:
             await self._task
 
     async def _run(self) -> None:
+        logger = get_logger(self.config)
         while True:
             await self._flush.wait()
             self._flush.clear()
             await asyncio.sleep(self.debounce_seconds)
             if self._dirty:
-                async with self.lock:
-                    save_state(self.config, self.state)
-                self._dirty = False
+                try:
+                    async with self.lock:
+                        save_state(self.config, self.state)
+                    self._dirty = False
+                except Exception as exc:
+                    log_event(logger, "state_save_failed", error=str(exc))
             if self._stop.is_set():
                 break
 
@@ -479,7 +491,7 @@ class TraceWriter:
 class RateLimiter:
     max_rps: int
     max_rpm: int
-    recent: Deque[float] = field(default_factory=deque)
+    recent: Deque[float] = field(default_factory=lambda: deque(maxlen=10000))
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def allow(self) -> bool:
@@ -516,7 +528,7 @@ class KeyedRateLimiter:
             return True
         async with self.lock:
             now = time.time()
-            bucket = self.recent.setdefault(key, deque())
+            bucket = self.recent.setdefault(key, deque(maxlen=10000))
             while bucket and now - bucket[0] > 60:
                 bucket.popleft()
             if self.max_rpm > 0 and len(bucket) >= self.max_rpm:
@@ -606,6 +618,7 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        ctx.http_client = httpx.AsyncClient(timeout=30.0, limits=httpx.Limits(max_connections=100, max_keepalive_connections=20))
         await ctx.state_writer.start()
         await ctx.trace_writer.start()
         ctx.health_task = asyncio.create_task(_health_refresh_loop(ctx))
@@ -617,6 +630,8 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
                 await ctx.health_task
             await ctx.state_writer.stop()
             await ctx.trace_writer.stop()
+            if ctx.http_client:
+                await ctx.http_client.aclose()
 
     # Lifespan manages startup/shutdown for writers; avoid duplicate handlers.
     app = FastAPI(lifespan=lifespan)
@@ -713,7 +728,11 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
             )
 
         stream_ctx = None
-        client = httpx.AsyncClient(timeout=30.0)
+        client = ctx.http_client
+        if client is None:
+            # Lazy initialization for tests that don't use lifespan
+            client = httpx.AsyncClient(timeout=30.0)
+            ctx.http_client = client
         try:
             attempt = 0
             while True:
@@ -746,7 +765,6 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
         except httpx.HTTPError as exc:
             if stream_ctx is not None:
                 await stream_ctx.__aexit__(None, None, None)
-            await client.aclose()
             async with ctx.state_lock:
                 record_request(ctx.state, key_label, 503)
             await ctx.state_writer.mark_dirty()
@@ -849,11 +867,11 @@ def create_app(config: Config, registry: Registry, state: State) -> FastAPI:
         response_headers = _filter_hop_by_hop_headers(resp.headers.items())
         if resp.is_stream_consumed:
             content = resp.content if content is None else content
-            await _close_stream(stream_ctx, client)
+            await _close_stream(stream_ctx, None)
             return Response(
                 content=content, status_code=resp.status_code, headers=response_headers
             )
-        background = BackgroundTask(_close_stream, stream_ctx, client)
+        background = BackgroundTask(_close_stream, stream_ctx, None)
         return StreamingResponse(
             resp.aiter_raw(),
             status_code=resp.status_code,

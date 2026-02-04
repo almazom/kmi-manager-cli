@@ -181,11 +181,12 @@ def test_close_stream_handles_none() -> None:
         client = DummyClient()
         await proxy_module._close_stream(stream, client)
         assert stream.closed is True
-        assert client.closed is True
+        # Client is now shared and managed by lifespan, not closed per-request
+        assert client.closed is False
 
         client2 = DummyClient()
         await proxy_module._close_stream(None, client2)
-        assert client2.closed is True
+        assert client2.closed is False
 
     asyncio.run(run())
 
@@ -540,7 +541,8 @@ def test_proxy_stream_error_after_context(monkeypatch, tmp_path) -> None:
     resp = client.get("/kmi-rotor/v1/models")
     assert resp.status_code == 502
     assert stream_closed["flag"] is True
-    assert client_closed["flag"] is True
+    # Client is now shared and managed by lifespan, not closed per-request
+    assert client_closed["flag"] is False
 
 
 def test_proxy_retries_on_500(monkeypatch, tmp_path) -> None:

@@ -339,6 +339,10 @@ def select_key_round_robin(
                 state.rotation_index = (idx + 1) % total
                 mark_last_used(state, candidate.label)
                 return candidate
+        # When health data is provided but no keys match status criteria,
+        # don't fall back to status-agnostic selection (unless fail_open)
+        if not fail_open_on_empty_cache:
+            return None
     for offset in range(total):
         idx = (start + offset) % total
         candidate = registry.keys[idx]

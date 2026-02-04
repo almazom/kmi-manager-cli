@@ -96,7 +96,8 @@ def test_select_key_round_robin_prefers_healthy() -> None:
     assert key.label == "b"
 
 
-def test_select_key_round_robin_falls_back_to_warn() -> None:
+def test_select_key_round_robin_no_fallback_to_unhealthy() -> None:
+    """When no healthy keys and fail_open=False, returns None instead of falling back."""
     registry = Registry(
         keys=[KeyRecord(label="a", api_key="sk-a"), KeyRecord(label="b", api_key="sk-b")]
     )
@@ -123,7 +124,13 @@ def test_select_key_round_robin_falls_back_to_warn() -> None:
             error_rate=0.0,
         ),
     }
-    key = select_key_round_robin(registry, state, health=health)
+    # With fail_open_on_empty_cache=False (default), should return None when no healthy keys
+    key = select_key_round_robin(registry, state, health=health, fail_open_on_empty_cache=False)
+    assert key is None
+    
+    # With fail_open_on_empty_cache=True, should fall back to eligible keys
+    key = select_key_round_robin(registry, state, health=health, fail_open_on_empty_cache=True)
+    assert key is not None
     assert key.label == "a"
 
 
