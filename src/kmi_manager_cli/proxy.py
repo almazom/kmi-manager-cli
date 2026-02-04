@@ -487,61 +487,63 @@ class TraceWriter:
                 log_event(self.logger, "trace_write_failed", error=str(exc))
 
 
+def _check_rate_limits(recent: Deque[float], max_rps: int, max_rpm: int, now: float) -> bool:
+    """Check if request is within rate limits. Returns True if allowed."""
+    # Clean old entries
+    while recent and now - recent[0] > 60:
+        recent.popleft()
+    
+    # Check per-minute limit
+    if max_rpm > 0 and len(recent) >= max_rpm:
+        return False
+    
+    # Check per-second limit
+    if max_rps > 0:
+        cutoff = now - 1
+        rps = sum(1 for ts in reversed(recent) if ts >= cutoff)
+        if rps >= max_rps:
+            return False
+    
+    return True
+
+
 @dataclass
 class RateLimiter:
+    """Token bucket rate limiter for global proxy limits."""
     max_rps: int
     max_rpm: int
     recent: Deque[float] = field(default_factory=lambda: deque(maxlen=10000))
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def allow(self) -> bool:
+        """Check if a request is allowed under current rate limits."""
         if self.max_rps <= 0 and self.max_rpm <= 0:
             return True
         async with self.lock:
             now = time.time()
-            while self.recent and now - self.recent[0] > 60:
-                self.recent.popleft()
-            if self.max_rpm > 0 and len(self.recent) >= self.max_rpm:
+            if not _check_rate_limits(self.recent, self.max_rps, self.max_rpm, now):
                 return False
-            if self.max_rps > 0:
-                cutoff = now - 1
-                rps = 0
-                for ts in reversed(self.recent):
-                    if ts < cutoff:
-                        break
-                    rps += 1
-                if rps >= self.max_rps:
-                    return False
             self.recent.append(now)
             return True
 
 
 @dataclass
 class KeyedRateLimiter:
+    """Per-key rate limiter with separate buckets for each key."""
     max_rps: int
     max_rpm: int
     recent: dict[str, Deque[float]] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def allow(self, key: str) -> bool:
+        """Check if a request for the given key is allowed under current rate limits."""
         if self.max_rps <= 0 and self.max_rpm <= 0:
             return True
         async with self.lock:
             now = time.time()
             bucket = self.recent.setdefault(key, deque(maxlen=10000))
-            while bucket and now - bucket[0] > 60:
-                bucket.popleft()
-            if self.max_rpm > 0 and len(bucket) >= self.max_rpm:
+            if not _check_rate_limits(bucket, self.max_rps, self.max_rpm, now):
                 return False
-            if self.max_rps > 0:
-                cutoff = now - 1
-                rps = 0
-                for ts in reversed(bucket):
-                    if ts < cutoff:
-                        break
-                    rps += 1
-                if rps >= self.max_rps:
-                    return False
             bucket.append(now)
             return True
 
