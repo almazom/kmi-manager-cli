@@ -1,3 +1,19 @@
+"""KMI Manager CLI - Command-line interface for key rotation and proxy management.
+
+This module provides the main CLI commands for managing API keys, running the proxy,
+and monitoring key health. It uses Typer for command handling and Rich for output.
+
+Main Commands:
+    status: Show current key status and health
+    rotate: Manually rotate to the healthiest key
+    proxy: Start the FastAPI proxy server
+    doctor: Run diagnostics and health checks
+    audit: Show audit log of key usage
+
+The CLI supports both interactive and programmatic usage, with comprehensive
+error handling and user-friendly output formatting.
+"""
+
 from __future__ import annotations
 
 import json

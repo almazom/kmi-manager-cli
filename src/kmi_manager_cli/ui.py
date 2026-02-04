@@ -1,3 +1,16 @@
+"""Rich-based terminal UI rendering for KMI Manager CLI.
+
+This module provides formatted terminal output using Rich, including
+tables, panels, and colorized status displays for key health,
+configuration, and trace viewing.
+
+Key Components:
+    console: Shared Rich console instance
+    render_key_table: Displays key status in table format
+    render_health_dashboard: Shows comprehensive health overview
+    render_proxy_status: Displays proxy server status
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

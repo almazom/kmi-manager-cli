@@ -1,3 +1,24 @@
+"""Key registry management and API key loading.
+
+This module handles loading API keys from the auth directory (_auths/),
+parsing .env files, and building a prioritized registry of available keys.
+
+Key Components:
+    KeyRecord: Immutable record of a single API key with metadata
+    Registry: Container for all keys with active index tracking
+    load_auths_dir: Scans auth directory and builds registry
+    mask_key: Masks API keys for safe display/logging
+
+Key Prioritization:
+    Keys are sorted by:
+    1. Priority (higher first, from KMI_KEY_PRIORITY)
+    2. Label (alphabetically, case-insensitive)
+
+Security:
+    Key hashes (SHA-256) are computed for trace correlation without
+    exposing actual key values.
+"""
+
 from __future__ import annotations
 
 import hashlib

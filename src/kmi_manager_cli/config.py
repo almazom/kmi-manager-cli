@@ -1,3 +1,27 @@
+"""Configuration loading and validation for KMI Manager CLI.
+
+This module handles all configuration for KMI Manager CLI, loading from
+environment variables and optional .env files. All configuration is
+validated and normalized into an immutable Config dataclass.
+
+Key Components:
+    Config: Frozen dataclass containing all settings
+    load_config: Loads and validates configuration from environment
+    validate_base_url: Ensures upstream URLs use HTTPS and match allowlist
+
+Configuration Sources (in order of precedence):
+    1. Explicit env_path argument to load_config()
+    2. KMI_ENV_PATH environment variable
+    3. .env file in project root
+    4. Existing environment variables
+    5. Default constants (DEFAULT_*)
+
+Security Features:
+    - URL allowlist validation (KMI_UPSTREAM_ALLOWLIST)
+    - HTTPS enforcement for upstream URLs
+    - File permission hardening option (KMI_ENFORCE_FILE_PERMS)
+"""
+
 from __future__ import annotations
 
 import os
