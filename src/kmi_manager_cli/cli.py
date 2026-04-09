@@ -595,10 +595,6 @@ def main_callback(
         raise typer.Exit()
 
 
-if __name__ == "__main__":
-    app()
-
-
 def main() -> None:
     app()
 
@@ -1243,3 +1239,7 @@ def status(
     """Show current rotation status."""
     config = _load_config_or_exit()
     _render_status(config, as_json=json_output)
+
+
+if __name__ == "__main__":
+    main()
